@@ -201,30 +201,42 @@ def return_powerbank(data: ReturnRequest):
 def get_user_rentals(user_id: int):
     return [r for r in rentals if r["user_id"] == user_id]
 
-# =========================
+# ==========================
 # 📱 SMS AUTH
-# =========================
+# ==========================
 
 sms_codes = {}
 
+def normalize(phone: str):
+    phone = phone.strip()
+    if not phone.startswith("+"):
+        phone = "+" + phone
+    return phone
+
+
 @app.post("/send_sms")
 def send_sms(data: PhoneRequest):
+    phone = normalize(data.phone)
+
     code = str(random.randint(1000, 9999))
-    sms_codes[data.phone] = code
-    print(f"SMS CODE: {code}")
+    sms_codes[phone] = code
+
+    print(f"SMS CODE: {code} for {phone}")
+
     return {"status": "ok"}
+
 
 @app.post("/verify_code")
 def verify_code(data: VerifyRequest):
-    saved_code = sms_codes.get(data.phone)
+    phone = normalize(data.phone)
+
+    saved_code = sms_codes.get(phone)
+
+    print(f"VERIFY {phone}: input={data.code}, saved={saved_code}")
 
     if saved_code != data.code:
         raise HTTPException(status_code=400, detail="Invalid code")
 
     return {"status": "ok", "user_id": 1}
-
-# =========================
-# 🚀 INIT
-# =========================
-
+    
 load_cards()
