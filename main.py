@@ -191,11 +191,14 @@ async def return_powerbank(data: ReturnRequest):
         if rental["id"] == data.rental_id and rental["status"] == "active":
 
             rental["status"] = "returned"
-            end_time = datetime.now()
 
+            # ✅ фикс времени
+            end_time = datetime.now()
+            rental["end_time"] = end_time
+
+            # ✅ правильный расчёт
             duration = end_time - rental["start_time"]
             minutes = int(duration.total_seconds() / 60)
-
             hours = minutes / 60
 
             if hours <= 1:
@@ -207,21 +210,30 @@ async def return_powerbank(data: ReturnRequest):
                 cost = 12 + (extra_days * 12)
 
             rental["cost"] = cost
-            save_rentals()
 
-            # 🔥 ВОТ ЭТО ВНУТРИ!!!
-            ws = connections.get(rental["user_id"])
-            if ws:
-                await ws.send_json({
-                    "type": "rental_finished",
-                    "cost": cost
-                })
-
+            # ✅ сначала обновляем станцию
             for station in stations:
                 if station["id"] == rental["station_id"]:
                     station["powerbanks"] += 1
 
-            return {"status": "returned", "cost": cost}
+            # ✅ сохраняем всё (уже с end_time)
+            save_rentals()
+
+            # ✅ безопасный WebSocket
+            ws = connections.get(rental["user_id"])
+            if ws:
+                try:
+                    await ws.send_json({
+                        "type": "rental_finished",
+                        "cost": cost
+                    })
+                except:
+                    connections.pop(rental["user_id"], None)
+
+            return {
+                "status": "returned",
+                "cost": cost
+            }
 
     raise HTTPException(status_code=404, detail="Active rental not found")
 
