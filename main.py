@@ -9,7 +9,8 @@ app = FastAPI()
 # =========================
 # 💾 STORAGE (CARDS)
 # =========================
-
+active_rentals = {}
+connections = {}
 cards = []
 card_id_counter = 1
 
@@ -17,6 +18,21 @@ def save_cards():
     print("💾 SAVING FILE")
     with open("cards.json", "w") as f:
         json.dump(cards, f)
+
+
+def save_rentals():
+    with open("rentals.json", "w") as f:
+        json.dump(rentals, f, default=str)
+
+def load_rentals():
+    global rentals, rental_id_counter
+    try:
+        with open("rentals.json") as f:
+            rentals = json.load(f)
+            if rentals:
+                rental_id_counter = max(r["id"] for r in rentals) + 1
+    except:
+        rentals = []
 
 def load_cards():
     global cards, card_id_counter
@@ -82,16 +98,18 @@ def add_card(data: CardRequest):
 def get_cards(user_id: int):
     return [c for c in cards if c["user_id"] == user_id]
 
+class SelectCardRequest(BaseModel):
+    card_id: int
+    user_id: int
 
 @app.post("/cards/select")
-def select_card(card_id: int, user_id: int):
-
+def select_card(data: SelectCardRequest):
     for c in cards:
-        if c["user_id"] == user_id:
+        if c["user_id"] == data.user_id:
             c["is_active"] = False
 
     for c in cards:
-        if c["id"] == card_id:
+        if c["id"] == data.card_id:
             c["is_active"] = True
 
     save_cards()
@@ -159,6 +177,7 @@ def rent_powerbank(data: RentRequest):
             }
 
             rentals.append(rental)
+            save_rentals()
             rental_id_counter += 1
 
             return rental
@@ -166,7 +185,7 @@ def rent_powerbank(data: RentRequest):
     raise HTTPException(status_code=404, detail="Station not found")
 
 @app.post("/return")
-def return_powerbank(data: ReturnRequest):
+async def return_powerbank(data: ReturnRequest):
 
     for rental in rentals:
         if rental["id"] == data.rental_id and rental["status"] == "active":
@@ -188,6 +207,15 @@ def return_powerbank(data: ReturnRequest):
                 cost = 12 + (extra_days * 12)
 
             rental["cost"] = cost
+            save_rentals()
+
+            # 🔥 ВОТ ЭТО ВНУТРИ!!!
+            ws = connections.get(rental["user_id"])
+            if ws:
+                await ws.send_json({
+                    "type": "rental_finished",
+                    "cost": cost
+                })
 
             for station in stations:
                 if station["id"] == rental["station_id"]:
@@ -226,17 +254,43 @@ def send_sms(data: PhoneRequest):
     return {"status": "ok"}
 
 
+users = {}
+user_id_counter = 1
+
 @app.post("/verify_code")
 def verify_code(data: VerifyRequest):
+    global user_id_counter
+
     phone = normalize(data.phone)
-
     saved_code = sms_codes.get(phone)
-
-    print(f"VERIFY {phone}: input={data.code}, saved={saved_code}")
 
     if saved_code != data.code:
         raise HTTPException(status_code=400, detail="Invalid code")
 
-    return {"status": "ok", "user_id": 1}
-    
+    if phone not in users:
+        users[phone] = user_id_counter
+        user_id_counter += 1
+
+    return {"status": "ok", "user_id": users[phone]}
+
 load_cards()
+load_rentals()
+
+import asyncio
+
+@app.websocket("/ws/{user_id}")
+async def websocket_endpoint(ws: WebSocket, user_id: int):
+    await ws.accept()
+    connections[user_id] = ws
+
+    print(f"WS CONNECTED: {user_id}")
+
+    try:
+        while True:
+            # держим соединение живым
+            await ws.send_json({"type": "ping"})
+            await asyncio.sleep(20)
+
+    except Exception as e:
+        print("WS CLOSED:", e)
+        connections.pop(user_id, None)
