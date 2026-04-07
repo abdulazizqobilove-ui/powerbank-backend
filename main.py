@@ -3,6 +3,13 @@ from pydantic import BaseModel
 from datetime import datetime
 import json
 import random
+import requests
+import threading
+import time
+
+BOT_TOKEN = "8172622865:AAFGX-nF9ECX_pZrQLy8McSCUhvYt19jbT0"
+
+telegram_users = {}  # chat_id -> user_id
 
 app = FastAPI()
 
@@ -13,6 +20,8 @@ active_rentals = {}
 connections = {}
 cards = []
 card_id_counter = 1
+payments = []
+payment_id_counter = 1
 
 def save_cards():
     print("💾 SAVING FILE")
@@ -137,6 +146,7 @@ stations = [
         "id": 1,
         "name": "Street Game Club",
         "powerbanks": 5,
+        "charged": 5,
         "empty_slots": 2,
         "address": "ул. Табиби",
         "lat": 41.3111,
@@ -163,10 +173,11 @@ def rent_powerbank(data: RentRequest):
     for station in stations:
         if station["id"] == data.station_id:
 
-            if station["powerbanks"] == 0:
-                raise HTTPException(status_code=400, detail="No powerbanks")
+            if station["charged"] == 0:
+               raise HTTPException(status_code=400, detail="No charged powerbanks")
 
             station["powerbanks"] -= 1
+            station["charged"] -= 1
 
             rental = {
                 "id": rental_id_counter,
@@ -184,19 +195,80 @@ def rent_powerbank(data: RentRequest):
 
     raise HTTPException(status_code=404, detail="Station not found")
 
+   
+   
+ # =========================
+# 💰 PAYMENTS
+# =========================
+
+class PaymentRequest(BaseModel):
+    rental_id: int
+
+
+@app.post("/payment/create")
+def create_payment(data: PaymentRequest):
+    global payment_id_counter
+
+    rental = next((r for r in rentals if r["id"] == data.rental_id), None)
+
+    if not rental:
+        raise HTTPException(404, "Rental not found")
+
+    if rental["status"] != "returned":
+        raise HTTPException(400, "Rental not finished")
+
+    if "cost" not in rental:
+        raise HTTPException(400, "No cost")
+
+    payment = {
+        "id": payment_id_counter,
+        "rental_id": data.rental_id,
+        "amount": rental["cost"],
+        "status": "pending"
+    }
+
+    payments.append(payment)
+    payment_id_counter += 1
+
+    return payment
+
+
+class ConfirmPaymentRequest(BaseModel):
+    payment_id: int
+
+
+@app.post("/payment/confirm")
+def confirm_payment(data: ConfirmPaymentRequest):
+
+    payment = next((p for p in payments if p["id"] == data.payment_id), None)
+
+    if not payment:
+        raise HTTPException(404, "Payment not found")
+
+    payment["status"] = "paid"
+
+    # 🔥 найти аренду
+    rental = next((r for r in rentals if r["id"] == payment["rental_id"]), None)
+
+    if rental:
+        rental["payment_status"] = "paid"
+
+    return {"status": "paid"}
+
 @app.post("/return")
 async def return_powerbank(data: ReturnRequest):
+
+    global payment_id_counter
 
     for rental in rentals:
         if rental["id"] == data.rental_id and rental["status"] == "active":
 
             rental["status"] = "returned"
 
-            # ✅ фикс времени
+            # время
             end_time = datetime.now()
             rental["end_time"] = end_time
 
-            # ✅ правильный расчёт
             duration = end_time - rental["start_time"]
             minutes = int(duration.total_seconds() / 60)
             hours = minutes / 60
@@ -211,15 +283,38 @@ async def return_powerbank(data: ReturnRequest):
 
             rental["cost"] = cost
 
-            # ✅ сначала обновляем станцию
+            # обновляем станцию
             for station in stations:
                 if station["id"] == rental["station_id"]:
                     station["powerbanks"] += 1
+                    station["charged"] += 1
 
-            # ✅ сохраняем всё (уже с end_time)
+            # 🔥 НАЙТИ АКТИВНУЮ КАРТУ
+            user_cards = [c for c in cards if c["user_id"] == rental["user_id"]]
+            active_card = next((c for c in user_cards if c["is_active"]), None)
+
+            if not active_card:
+                raise HTTPException(400, "No active card")
+
+            # 🔥 АВТОПЛАТЁЖ
+            payment = {
+                "id": payment_id_counter,
+                "rental_id": rental["id"],
+                "user_id": rental["user_id"],
+                "card_id": active_card["id"],
+                "amount": rental["cost"],
+                "status": "paid"
+            }
+
+            payments.append(payment)
+            payment_id_counter += 1
+
+            rental["payment_status"] = "paid"
+
+            # сохранить
             save_rentals()
 
-            # ✅ безопасный WebSocket
+            # websocket
             ws = connections.get(rental["user_id"])
             if ws:
                 try:
@@ -232,7 +327,8 @@ async def return_powerbank(data: ReturnRequest):
 
             return {
                 "status": "returned",
-                "cost": cost
+                "cost": cost,
+                "card": active_card["last4"]
             }
 
     raise HTTPException(status_code=404, detail="Active rental not found")
@@ -306,3 +402,41 @@ async def websocket_endpoint(ws: WebSocket, user_id: int):
     except Exception as e:
         print("WS CLOSED:", e)
         connections.pop(user_id, None)
+
+
+def get_updates():
+    url = f"https://api.telegram.org/bot{BOT_TOKEN}/getUpdates"
+    return requests.get(url).json()
+
+
+def handle_updates():
+    global user_id_counter
+
+    data = get_updates()
+
+    for u in data["result"]:
+        try:
+            message = u["message"]
+            chat_id = message["chat"]["id"]
+            text = message.get("text", "")
+
+            if text.startswith("/start"):
+                if chat_id not in telegram_users:
+                    telegram_users[chat_id] = user_id_counter
+                    user_id_counter += 1
+
+                    print(f"✅ TG USER: {chat_id}")
+
+        except:
+            pass
+
+
+def telegram_loop():
+    while True:
+        handle_updates()
+        time.sleep(2)
+
+
+threading.Thread(target=telegram_loop, daemon=True).start()
+
+        
