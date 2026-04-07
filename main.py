@@ -404,39 +404,29 @@ async def websocket_endpoint(ws: WebSocket, user_id: int):
         connections.pop(user_id, None)
 
 
-def get_updates():
-    url = f"https://api.telegram.org/bot{BOT_TOKEN}/getUpdates"
-    return requests.get(url).json()
 
-
-def handle_updates():
+@app.post("/telegram_webhook")
+async def telegram_webhook(request: Request):
     global user_id_counter
+    
+    from fastapi import Request
+    data = await request.json()
 
-    data = get_updates()
+    try:
+        message = data.get("message", {})
+        chat_id = message["chat"]["id"]
+        text = message.get("text", "")
 
-    for u in data["result"]:
-        try:
-            message = u["message"]
-            chat_id = message["chat"]["id"]
-            text = message.get("text", "")
+        if text.startswith("/start"):
+            if chat_id not in telegram_users:
+                telegram_users[chat_id] = user_id_counter
+                user_id_counter += 1
 
-            if text.startswith("/start"):
-                if chat_id not in telegram_users:
-                    telegram_users[chat_id] = user_id_counter
-                    user_id_counter += 1
+                print(f"✅ TG USER: {chat_id}")
 
-                    print(f"✅ TG USER: {chat_id}")
+    except Exception as e:
+        print("TG ERROR:", e)
 
-        except:
-            pass
-
-
-def telegram_loop():
-    while True:
-        handle_updates()
-        time.sleep(2)
-
-
-threading.Thread(target=telegram_loop, daemon=True).start()
+    return {"ok": True}
 
         
