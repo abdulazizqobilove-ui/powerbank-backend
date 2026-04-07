@@ -3,11 +3,12 @@ from pydantic import BaseModel
 from datetime import datetime
 import json
 import random
-import requests
-import threading
-import time
 
 BOT_TOKEN = "8172622865:AAFGX-nF9ECX_pZrQLy8McSCUhvYt19jbT0"
+
+telegram_users = {}
+login_tokens = {}   # 👈 ВОТ ЭТО ДОБАВЬ
+user_id_counter = 1
 
 telegram_users = {}  # chat_id -> user_id
 
@@ -338,78 +339,25 @@ def get_user_rentals(user_id: int):
     return [r for r in rentals if r["user_id"] == user_id]
 
 # ==========================
-# 📱 SMS AUTH
+# 📱 TELEGRAM LOGIN FULL
 # ==========================
 
-sms_codes = {}
+from fastapi import Request
+import uuid
 
-def normalize(phone: str):
-    phone = phone.strip()
-    if not phone.startswith("+"):
-        phone = "+" + phone
-    return phone
-
-
-@app.post("/send_sms")
-def send_sms(data: PhoneRequest):
-    phone = normalize(data.phone)
-
-    code = str(random.randint(1000, 9999))
-    sms_codes[phone] = code
-
-    print(f"SMS CODE: {code} for {phone}")
-
-    return {"status": "ok"}
+# 🔹 1. Создать токен (Flutter вызывает)
+@app.get("/create_token")
+def create_token():
+    token = str(uuid.uuid4())
+    login_tokens[token] = None
+    return {"token": token}
 
 
-users = {}
-user_id_counter = 1
-
-@app.post("/verify_code")
-def verify_code(data: VerifyRequest):
-    global user_id_counter
-
-    phone = normalize(data.phone)
-    saved_code = sms_codes.get(phone)
-
-    if saved_code != data.code:
-        raise HTTPException(status_code=400, detail="Invalid code")
-
-    if phone not in users:
-        users[phone] = user_id_counter
-        user_id_counter += 1
-
-    return {"status": "ok", "user_id": users[phone]}
-
-load_cards()
-load_rentals()
-
-import asyncio
-
-@app.websocket("/ws/{user_id}")
-async def websocket_endpoint(ws: WebSocket, user_id: int):
-    await ws.accept()
-    connections[user_id] = ws
-
-    print(f"WS CONNECTED: {user_id}")
-
-    try:
-        while True:
-            # держим соединение живым
-            await ws.send_json({"type": "ping"})
-            await asyncio.sleep(20)
-
-    except Exception as e:
-        print("WS CLOSED:", e)
-        connections.pop(user_id, None)
-
-
-
+# 🔹 2. Telegram webhook (бот ловит /start)
 @app.post("/telegram_webhook")
 async def telegram_webhook(request: Request):
     global user_id_counter
-    
-    from fastapi import Request
+
     data = await request.json()
 
     try:
@@ -418,15 +366,32 @@ async def telegram_webhook(request: Request):
         text = message.get("text", "")
 
         if text.startswith("/start"):
-            if chat_id not in telegram_users:
-                telegram_users[chat_id] = user_id_counter
-                user_id_counter += 1
+            parts = text.split(" ")
 
-                print(f"✅ TG USER: {chat_id}")
+            if len(parts) > 1:
+                token = parts[1]
+
+                if token in login_tokens:
+                    user_id = user_id_counter
+                    user_id_counter += 1
+
+                    telegram_users[chat_id] = user_id
+                    login_tokens[token] = user_id
+
+                    print(f"✅ LOGIN SUCCESS: {user_id}")
 
     except Exception as e:
         print("TG ERROR:", e)
 
     return {"ok": True}
 
-        
+
+# 🔹 3. Проверка логина (Flutter опрашивает)
+@app.get("/check_token/{token}")
+def check_token(token: str):
+    user_id = login_tokens.get(token)
+
+    if not user_id:
+        return {"status": "waiting"}
+
+    return {"status": "ok", "user_id": user_id}
