@@ -10,8 +10,6 @@ telegram_users = {}
 login_tokens = {}   # 👈 ВОТ ЭТО ДОБАВЬ
 user_id_counter = 1
 
-telegram_users = {}  # chat_id -> user_id
-
 app = FastAPI()
 
 # =========================
