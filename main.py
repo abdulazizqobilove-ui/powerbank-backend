@@ -171,6 +171,35 @@ def check_token(token: str):
         return {"status": "waiting"}
 
     return {"status": "ok", "user_id": user_id}
+    
+
+@app.post("/return")
+def return_powerbank(data: ReturnRequest):
+    db = SessionLocal()
+
+    rental = db.query(Rental).filter(Rental.id == data.rental_id).first()
+
+    if not rental:
+        raise HTTPException(status_code=404, detail="Rental not found")
+
+    rental.status = "finished"
+    rental.end_time = datetime.now()
+
+    # простая логика цены (как у тебя во Flutter)
+    diff = (rental.end_time - rental.start_time).total_seconds()
+    hours = diff / 3600
+
+    if hours <= 1:
+        rental.cost = 6
+    elif hours <= 24:
+        rental.cost = 12
+    else:
+        extra_days = int((hours - 24) // 24 + 1)
+        rental.cost = 12 + extra_days * 12
+
+    db.commit()
+
+    return {"status": "ok", "cost": rental.cost}
 
 # =========================
 # 🔌 WEBSOCKET
