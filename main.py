@@ -9,7 +9,7 @@ import uuid
 from sqlalchemy import create_engine, Column, Integer, String, DateTime, Float
 from sqlalchemy.orm import declarative_base, sessionmaker
 
-DATABASE_URL = "postgresql://postgres.pvtxhajrrgkzimhgdaih:401738666Qobilov@aws-0-eu-central-1.pooler.supabase.com:6543/postgres"
+DATABASE_URL = "postgresql://postgres:401738666Qobilov@db.pvtxhajrrgkzimhgdaih.supabase.co:5432/postgres"
 
 engine = create_engine(
     DATABASE_URL,
