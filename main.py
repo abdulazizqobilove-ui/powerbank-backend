@@ -1,17 +1,65 @@
-from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect, Request
+from fastapi import FastAPI, HTTPException, WebSocket, Request
 from pydantic import BaseModel
 from datetime import datetime
 import uuid
 
-from database import SessionLocal, engine
-from models import Base, User, Rental
+# =========================
+# 🧠 DB (SQLite)
+# =========================
+from sqlalchemy import create_engine, Column, Integer, String, DateTime, Float
+from sqlalchemy.orm import declarative_base, sessionmaker
 
+DATABASE_URL = "postgresql://postgres.pvtxhajrrgkzimhgdaih:401738666Qobilov@aws-0-eu-central-1.pooler.supabase.com:6543/postgres"
+
+engine = create_engine(
+    DATABASE_URL,
+    pool_pre_ping=True
+)
+SessionLocal = sessionmaker(bind=engine)
+Base = declarative_base()
+
+class Card(Base):
+    __tablename__ = "cards"
+    id = Column(Integer, primary_key=True)
+    user_id = Column(Integer)
+    brand = Column(String)
+    last4 = Column(String)
+    is_active = Column(Integer)
+
+class Rental(Base):
+    __tablename__ = "rentals"
+    id = Column(Integer, primary_key=True)
+    user_id = Column(Integer)
+    station_id = Column(Integer)
+    status = Column(String)
+    start_time = Column(DateTime)
+    end_time = Column(DateTime, nullable=True)
+    cost = Column(Float, default=0)
+    payment_status = Column(String, default="none")
+
+class Payment(Base):
+    __tablename__ = "payments"
+    id = Column(Integer, primary_key=True)
+    rental_id = Column(Integer)
+    amount = Column(Float)
+    status = Column(String)  # pending / paid
+
+Base.metadata.create_all(bind=engine)
+
+class User(Base):
+    __tablename__ = "users"
+    id = Column(Integer, primary_key=True)
+    telegram_id = Column(String, unique=True)
+    phone = Column(String, nullable=True)
+    name = Column(String, nullable=True)
+
+# =========================
+# ⚙️ APP
+# =========================
 app = FastAPI()
 
-telegram_users = {}
-login_tokens = {}
-
 connections = {}
+login_tokens = {}
 
 # =========================
 # 📦 MODELS
@@ -28,8 +76,14 @@ class CardRequest(BaseModel):
     user_id: int
     number: str
 
+class PaymentRequest(BaseModel):
+    rental_id: int
+
+class ConfirmPaymentRequest(BaseModel):
+    payment_id: int
+
 # =========================
-# 🔋 STATIONS
+# 📍 STATIONS
 # =========================
 
 stations = [
@@ -45,29 +99,83 @@ stations = [
     }
 ]
 
-@app.get("/")
-def home():
-    return {"message": "Powerbank backend works"}
-
 @app.get("/stations")
 def get_stations():
     return stations
 
 # =========================
-# 🔋 RENT → DB
+# 💳 CARDS
+# =========================
+
+@app.post("/cards/add")
+def add_card(data: CardRequest):
+    db = SessionLocal()
+
+    db.query(Card).filter(Card.user_id == data.user_id).update({"is_active": 0})
+
+    card = Card(
+        user_id=data.user_id,
+        brand="VISA",
+        last4=data.number[-4:],
+        is_active=1
+    )
+
+    db.add(card)
+    db.commit()
+    db.refresh(card)
+
+    return {
+        "id": card.id,
+        "brand": card.brand,
+        "last4": card.last4
+    }
+
+@app.get("/cards/{user_id}")
+def get_cards(user_id: int):
+    db = SessionLocal()
+    cards = db.query(Card).filter(Card.user_id == user_id).all()
+
+    return [
+        {
+            "id": c.id,
+            "brand": c.brand,
+            "last4": c.last4,
+            "is_active": c.is_active
+        } for c in cards
+    ]
+
+@app.post("/cards/select")
+def select_card(data: dict):
+    db = SessionLocal()
+
+    db.query(Card).filter(Card.user_id == data["user_id"]).update({"is_active": 0})
+    db.query(Card).filter(Card.id == data["card_id"]).update({"is_active": 1})
+
+    db.commit()
+    return {"status": "ok"}
+
+@app.delete("/cards/{card_id}")
+def delete_card(card_id: int):
+    db = SessionLocal()
+    db.query(Card).filter(Card.id == card_id).delete()
+    db.commit()
+    return {"status": "deleted"}
+
+# =========================
+# 🔋 RENT
 # =========================
 
 @app.post("/rent")
 def rent_powerbank(data: RentRequest):
     db = SessionLocal()
 
-    existing = db.query(Rental).filter(
+    active = db.query(Rental).filter(
         Rental.user_id == data.user_id,
         Rental.status == "active"
     ).first()
 
-    if existing:
-        raise HTTPException(status_code=400, detail="Already has active rental")
+    if active:
+        raise HTTPException(400, "Already has active rental")
 
     rental = Rental(
         user_id=data.user_id,
@@ -80,38 +188,250 @@ def rent_powerbank(data: RentRequest):
     db.commit()
     db.refresh(rental)
 
-    return {
-        "id": rental.id,
-        "user_id": rental.user_id,
-        "station_id": rental.station_id,
-        "status": rental.status
-    }
-
-# =========================
-# 📜 RENTALS FROM DB
-# =========================
+    return {"id": rental.id}
 
 @app.get("/rentals/{user_id}")
 def get_rentals(user_id: int):
     db = SessionLocal()
-
     rentals = db.query(Rental).filter(Rental.user_id == user_id).all()
 
     return [
-        {
-            "id": r.id,
-            "user_id": r.user_id,
-            "station_id": r.station_id,
-            "status": r.status,
-            "start_time": r.start_time,
-            "end_time": r.end_time,
-            "cost": r.cost
-        }
-        for r in rentals
-    ]
+    {
+        "id": r.id,
+        "status": r.status,
+        "start_time": r.start_time.isoformat(),
+        "end_time": r.end_time.isoformat() if r.end_time else None,
+        "cost": r.cost,
+        "payment_status": r.payment_status  # 👈 ВОТ ЭТО ДОБАВИЛ
+    }
+    for r in rentals
+]
 
 # =========================
-# 📱 TELEGRAM LOGIN → DB
+# 🔁 RETURN
+# =========================
+
+@app.post("/return")
+async def return_powerbank(data: ReturnRequest):
+    db = SessionLocal()
+
+    rental = db.query(Rental).filter(
+        Rental.id == data.rental_id,
+        Rental.status == "active"
+    ).first()
+
+    if not rental:
+        raise HTTPException(404, "Not found")
+
+    rental.status = "returned"
+    rental.end_time = datetime.now()
+
+    duration = rental.end_time - rental.start_time
+    hours = duration.total_seconds() / 3600
+
+    if hours <= 1:
+        cost = 7
+    elif hours <= 24:
+        cost = 14
+    else:
+        extra_days = int((hours - 24) / 24) + 1
+        cost = 14 + (extra_days * 14)
+
+    rental.cost = cost
+    rental.payment_status = "waiting"
+
+    db.commit()
+
+    # 🔥 FIXED SOCKET
+    ws = connections.get(rental.user_id)
+    if ws:
+        await ws.send_json({
+            "type": "rental_finished",
+            "cost": cost
+        })
+
+    return {
+        "type": "rental_finished",
+        "cost": cost,
+        "rental_id": rental.id
+    }
+
+# =========================
+# 💰 PAYMENTS
+# =========================
+import requests
+
+ALIF_API = "https://alif.shop/api/payment/create"
+API_KEY = "ТВОЙ_API_KEY"
+
+import requests
+
+ALIF_API = "https://alif.shop/api/payment/create"
+API_KEY = "ТВОЙ_API_KEY"
+CALLBACK_URL = "https://powerbank-backend.onrender.com/payment/webhook"  # 👈 поменяй!
+
+@app.post("/payment/create")
+def create_payment(data: PaymentRequest):
+    db = SessionLocal()
+
+    try:
+        rental = db.query(Rental).filter(Rental.id == data.rental_id).first()
+
+        if not rental:
+            raise HTTPException(404, "Rental not found")
+
+        # ❗ если уже оплачено — не создаём заново
+        if rental.payment_status == "paid":
+            raise HTTPException(400, "Already paid")
+
+        # ✅ проверяем карту
+        card = db.query(Card).filter(
+            Card.user_id == rental.user_id,
+            Card.is_active == 1
+        ).first()
+
+        if not card:
+            raise HTTPException(400, "No active card")
+
+        # ✅ создаём платеж
+        payment = Payment(
+            rental_id=rental.id,
+            amount=rental.cost,
+            status="pending"
+        )
+
+        db.add(payment)
+        db.commit()
+        db.refresh(payment)
+
+        # ✅ запрос в Alif
+        res = requests.post(
+            ALIF_API,
+            json={
+                "amount": int(rental.cost * 100),
+                "order_id": str(payment.id),  # 🔥 ключевая связь
+                "description": "Powerbank rent",
+                "callback_url": CALLBACK_URL  # 🔥 добавили webhook
+            },
+            headers={
+                "Authorization": f"Bearer {API_KEY}"
+            }
+        )
+
+        # ❗ проверка ответа
+        if res.status_code != 200:
+            raise HTTPException(400, "Alif API error")
+
+        result = res.json()
+        payment_url = result.get("payment_url")
+
+        if not payment_url:
+            raise HTTPException(400, "Payment creation failed")
+
+        return {"payment_url": payment_url}
+
+    except Exception as e:
+        print("PAYMENT ERROR:", e)
+        raise
+
+    finally:
+        db.close()
+
+@app.get("/payment/status/{rental_id}")
+def payment_status(rental_id: int):
+    db = SessionLocal()
+
+    rental = db.query(Rental).filter(Rental.id == rental_id).first()
+
+    if not rental:
+        raise HTTPException(404, "Not found")
+
+    return {
+        "status": rental.payment_status
+    }
+
+@app.post("/payment/confirm")
+def confirm_payment(data: ConfirmPaymentRequest):
+    db = SessionLocal()
+
+    payment = db.query(Payment).filter(Payment.id == data.payment_id).first()
+
+    if not payment:
+        raise HTTPException(404, "Payment not found")
+
+    payment.status = "paid"
+
+    rental = db.query(Rental).filter(Rental.id == payment.rental_id).first()
+    if rental:
+        rental.payment_status = "paid"
+
+    db.commit()
+
+    return {"status": "paid"}
+
+# =========================
+# 🔌 WEBSOCKET
+# =========================
+
+@app.websocket("/ws/{user_id}")
+async def websocket_endpoint(ws: WebSocket, user_id: int):
+    await ws.accept()
+    connections[user_id] = ws
+
+    try:
+        while True:
+            await ws.receive_text()
+    except:
+        connections.pop(user_id, None)
+
+
+# =========================
+# 💰 WEBHOOK (ОПЛАТА)
+# =========================
+
+@app.post("/payment/webhook")
+async def payment_webhook(request: Request):
+    data = await request.json()
+
+    print("WEBHOOK:", data)
+
+    order_id = data.get("order_id")
+    status = data.get("status")
+
+    if not order_id:
+        return {"ok": False}
+
+    db = SessionLocal()
+
+    try:
+        payment = db.query(Payment).filter(Payment.id == int(order_id)).first()
+
+        if not payment:
+            return {"ok": False}
+
+        if status == "paid":
+            payment.status = "paid"
+
+            rental = db.query(Rental).filter(Rental.id == payment.rental_id).first()
+            if rental:
+                rental.payment_status = "paid"
+
+                # 🔥 ВОТ ЭТО САМОЕ ВАЖНОЕ
+                ws = connections.get(rental.user_id)
+                if ws:
+                    await ws.send_json({
+                        "type": "payment_success"
+                    })
+
+        db.commit()
+
+    finally:
+        db.close()
+
+    return {"ok": True}
+
+# =========================
+# 📱 TELEGRAM LOGIN
 # =========================
 
 @app.get("/create_token")
@@ -126,7 +446,13 @@ async def telegram_webhook(request: Request):
 
     try:
         message = data.get("message", {})
-        chat_id = message["chat"]["id"]
+        chat = message.get("chat", {})
+
+        chat_id = str(chat.get("id"))
+        first_name = chat.get("first_name", "")
+        last_name = chat.get("last_name", "")
+        full_name = f"{first_name} {last_name}".strip()
+
         text = message.get("text", "")
 
         if text.startswith("/start"):
@@ -136,27 +462,23 @@ async def telegram_webhook(request: Request):
                 token = parts[1]
 
                 if token in login_tokens:
-
                     db = SessionLocal()
 
-                    existing_user = db.query(User).filter(
-                        User.chat_id == str(chat_id)
-                    ).first()
+                    user = db.query(User).filter(User.telegram_id == chat_id).first()
 
-                    if existing_user:
-                        user_id = existing_user.id
+                    if not user:
+                        user = User(
+                            telegram_id=chat_id,
+                            name=full_name
+                        )
+                        db.add(user)
                     else:
-                        new_user = User(chat_id=str(chat_id))
-                        db.add(new_user)
-                        db.commit()
-                        db.refresh(new_user)
+                        user.name = full_name
 
-                        user_id = new_user.id
+                    db.commit()
+                    db.refresh(user)
 
-                    telegram_users[chat_id] = user_id
-                    login_tokens[token] = user_id
-
-                    print(f"✅ LOGIN SUCCESS: {user_id}")
+                    login_tokens[token] = user.id
 
     except Exception as e:
         print("TG ERROR:", e)
@@ -170,54 +492,11 @@ def check_token(token: str):
     if not user_id:
         return {"status": "waiting"}
 
-    return {"status": "ok", "user_id": user_id}
-    
-
-@app.post("/return")
-def return_powerbank(data: ReturnRequest):
     db = SessionLocal()
+    user = db.query(User).filter(User.id == user_id).first()
 
-    rental = db.query(Rental).filter(Rental.id == data.rental_id).first()
-
-    if not rental:
-        raise HTTPException(status_code=404, detail="Rental not found")
-
-    rental.status = "finished"
-    rental.end_time = datetime.now()
-
-    # простая логика цены (как у тебя во Flutter)
-    diff = (rental.end_time - rental.start_time).total_seconds()
-    hours = diff / 3600
-
-    if hours <= 1:
-        rental.cost = 6
-    elif hours <= 24:
-        rental.cost = 12
-    else:
-        extra_days = int((hours - 24) // 24 + 1)
-        rental.cost = 12 + extra_days * 12
-
-    db.commit()
-
-    return {"status": "ok", "cost": rental.cost}
-
-# =========================
-# 🔌 WEBSOCKET
-# =========================
-
-@app.websocket("/ws/{user_id}")
-async def websocket_endpoint(websocket: WebSocket, user_id: int):
-    await websocket.accept()
-    connections[user_id] = websocket
-
-    try:
-        while True:
-            await websocket.receive_text()
-    except WebSocketDisconnect:
-        connections.pop(user_id, None)
-
-# =========================
-# 🗄 DB INIT
-# =========================
-
-Base.metadata.create_all(bind=engine)
+    return {
+        "status": "ok",
+        "user_id": user.id,
+        "name": user.name or ""
+    }
