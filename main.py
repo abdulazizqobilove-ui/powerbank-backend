@@ -9,7 +9,9 @@ import uuid
 from sqlalchemy import create_engine, Column, Integer, String, DateTime, Float
 from sqlalchemy.orm import declarative_base, sessionmaker
 
-DATABASE_URL = "postgresql://postgres:401738666Qobilov@db.pvtxhajrrgkzimhgdaih.supabase.co:5432/postgres"
+import os
+
+DATABASE_URL = os.getenv("DATABASE_URL", "sqlite:///./test.db")
 
 engine = create_engine(
     DATABASE_URL,
@@ -44,7 +46,7 @@ class Payment(Base):
     amount = Column(Float)
     status = Column(String)  # pending / paid
 
-Base.metadata.create_all(bind=engine)
+ Base.metadata.create_all(bind=engine)
 
 class User(Base):
     __tablename__ = "users"
