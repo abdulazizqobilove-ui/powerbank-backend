@@ -47,7 +47,7 @@ class Payment(Base):
     amount = Column(Float)
     status = Column(String)  # pending / paid
 
- Base.metadata.create_all(bind=engine)
+Base.metadata.create_all(bind=engine)
 
 class User(Base):
     __tablename__ = "users"
