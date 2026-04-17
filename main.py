@@ -25,7 +25,11 @@ SessionLocal = sessionmaker(bind=engine)
 Base = declarative_base()
 
 # 🔥 ADMIN (после engine!)
-admin = Admin(app, engine)
+from sqladmin import Admin
+
+admin = Admin(engine=engine)
+
+admin.mount_to(app)
 
 class Card(Base):
     __tablename__ = "cards"
