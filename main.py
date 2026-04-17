@@ -7,6 +7,8 @@ from sqlalchemy import create_engine, Column, Integer, String, DateTime, Float
 from sqlalchemy.orm import declarative_base, sessionmaker
 
 from sqladmin import Admin, ModelView
+from sqladmin.authentication import AuthenticationBackend
+from starlette.requests import Request
 
 import os
 
@@ -27,7 +29,28 @@ Base = declarative_base()
 # 🔥 ADMIN (после engine!)
 from sqladmin import Admin
 
-admin = Admin(app=app, engine=engine)
+admin = Admin(
+    app=app,
+    engine=engine,
+    authentication_backend=AdminAuth(secret_key="secret123")
+)
+
+class AdminAuth(AuthenticationBackend):
+    async def login(self, request: Request):
+        form = await request.form()
+        username = form.get("username")
+        password = form.get("password")
+
+        if username == "admin" and password == "123456":
+            request.session.update({"token": "ok"})
+            return True
+        return False
+
+    async def logout(self, request: Request):
+        request.session.clear()
+
+    async def authenticate(self, request: Request):
+        return request.session.get("token") == "ok"
 
 class Card(Base):
     __tablename__ = "cards"
