@@ -3,14 +3,16 @@ from pydantic import BaseModel
 from datetime import datetime
 import uuid
 
-# =========================
-# 🧠 DB (SQLite)
-# =========================
 from sqlalchemy import create_engine, Column, Integer, String, DateTime, Float
 from sqlalchemy.orm import declarative_base, sessionmaker
 
+from sqladmin import Admin, ModelView
+
 import os
 
+app = FastAPI()
+
+# 🔥 DATABASE
 DATABASE_URL = os.getenv("DATABASE_URL", "sqlite:///./test.db")
 print("DATABASE:", DATABASE_URL)
 
@@ -18,8 +20,12 @@ engine = create_engine(
     DATABASE_URL,
     pool_pre_ping=True
 )
+
 SessionLocal = sessionmaker(bind=engine)
 Base = declarative_base()
+
+# 🔥 ADMIN (после engine!)
+admin = Admin(app, engine)
 
 class Card(Base):
     __tablename__ = "cards"
@@ -59,7 +65,6 @@ class User(Base):
 # =========================
 # ⚙️ APP
 # =========================
-app = FastAPI()
 
 connections = {}
 login_tokens = {}
@@ -503,3 +508,24 @@ def check_token(token: str):
         "user_id": user.id,
         "name": user.name or ""
     }
+
+    # =========================
+# 🔥 ADMIN PANEL
+# =========================
+
+class UserAdmin(ModelView, model=User):
+    column_list = [User.id, User.telegram_id, User.name]
+
+class CardAdmin(ModelView, model=Card):
+    column_list = [Card.id, Card.user_id, Card.last4, Card.is_active]
+
+class RentalAdmin(ModelView, model=Rental):
+    column_list = [Rental.id, Rental.user_id, Rental.status, Rental.cost]
+
+class PaymentAdmin(ModelView, model=Payment):
+    column_list = [Payment.id, Payment.rental_id, Payment.amount, Payment.status]
+
+admin.add_view(UserAdmin)
+admin.add_view(CardAdmin)
+admin.add_view(RentalAdmin)
+admin.add_view(PaymentAdmin)
