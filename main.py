@@ -27,7 +27,7 @@ Base = declarative_base()
 # 🔥 ADMIN (после engine!)
 from sqladmin import Admin
 
-admin = Admin(engine=engine, base_url="/admin")
+admin = Admin(app=app, engine=engine)
 
 class Card(Base):
     __tablename__ = "cards"
@@ -531,5 +531,3 @@ admin.add_view(UserAdmin)
 admin.add_view(CardAdmin)
 admin.add_view(RentalAdmin)
 admin.add_view(PaymentAdmin)
-
-admin.mount_to(app)
