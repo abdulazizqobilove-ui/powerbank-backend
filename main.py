@@ -53,14 +53,14 @@ class Payment(Base):
     amount = Column(Float)
     status = Column(String)  # pending / paid
 
-Base.metadata.create_all(bind=engine)
-
 class User(Base):
     __tablename__ = "users"
     id = Column(Integer, primary_key=True)
     telegram_id = Column(String, unique=True)
     phone = Column(String, nullable=True)
     name = Column(String, nullable=True)
+
+Base.metadata.create_all(bind=engine)
 
 # =========================
 # ⚙️ APP
@@ -509,7 +509,7 @@ def check_token(token: str):
         "name": user.name or ""
     }
 
-    # =========================
+# =========================
 # 🔥 ADMIN PANEL
 # =========================
 
