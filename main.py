@@ -17,7 +17,7 @@ class AdminAuth(AuthenticationBackend):
         password = form.get("password")
 
         if username == "admin" and password == "123456":
-            request.session.update({"token": "ok"})
+            request.session["token"] = "ok"   # 👈 ВАЖНО (не update)
             return True
         return False
 
