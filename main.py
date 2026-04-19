@@ -574,7 +574,7 @@ def get_stats():
         "unpaid_rentals": unpaid
     }
 
-    @app.get("/fix")
+@app.get("/fix")
 def fix():
     db = SessionLocal()
 
