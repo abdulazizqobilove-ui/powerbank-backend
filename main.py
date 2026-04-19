@@ -7,40 +7,11 @@ from sqlalchemy import create_engine, Column, Integer, String, DateTime, Float
 from sqlalchemy.orm import declarative_base, sessionmaker
 
 from sqladmin import Admin, ModelView
-from sqladmin.authentication import AuthenticationBackend
 from starlette.requests import Request
-
-class AdminAuth(AuthenticationBackend):
-    async def login(self, request: Request):
-        form = await request.form()
-        username = form.get("username")
-        password = form.get("password")
-
-        if username == "admin" and password == "123456":
-            request.session["token"] = "ok"
-            return True
-        return False
-
-    async def logout(self, request: Request):
-        request.session.clear()
-
-    async def authenticate(self, request: Request):
-        return request.session.get("token") == "ok"
 
 import os
 
 app = FastAPI()
-
-from starlette.middleware.sessions import SessionMiddleware
-
-app.secret_key = "supersecretkey"
-
-app.add_middleware(
-    SessionMiddleware,
-    secret_key="supersecretkey",
-    same_site="none",
-    https_only=True
-)
 
 # 🔥 DATABASE
 DATABASE_URL = os.getenv("DATABASE_URL", "sqlite:///./test.db")
@@ -569,7 +540,7 @@ admin.add_view(CardAdmin)
 admin.add_view(RentalAdmin)
 admin.add_view(PaymentAdmin)
 
-@app.get("/admin/stats")
+@app.get("/stats")
 def get_stats():
     db = SessionLocal()
 
