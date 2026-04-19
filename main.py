@@ -593,11 +593,7 @@ def stats_daily():
     payments = db.query(Payment).filter(Payment.status == "paid").all()
 
     for p in payments:
-        # 💥 защита от отсутствия created_at
-        if not hasattr(p, "created_at") or p.created_at is None:
-            day = "today"
-        else:
-            day = p.created_at.strftime("%Y-%m-%d")
+        day = p.created_at.strftime("%Y-%m-%d")
 
         if day not in result:
             result[day] = 0
