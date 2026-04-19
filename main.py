@@ -567,22 +567,29 @@ def get_stats():
         "unpaid_rentals": unpaid
     }
 
+from sqlalchemy import text
+
 @app.get("/fix-db")
 def fix_db():
     db = SessionLocal()
 
-    try:
-        # добавить колонку
-        db.execute(text("ALTER TABLE payments ADD COLUMN created_at TIMESTAMP"))
-    except:
-        pass  # если уже есть — не упадёт
+    db.execute(text("""
+        DO $$
+        BEGIN
+            IF NOT EXISTS (
+                SELECT 1 FROM information_schema.columns 
+                WHERE table_name='payments' AND column_name='created_at'
+            ) THEN
+                ALTER TABLE payments ADD COLUMN created_at TIMESTAMP;
+            END IF;
+        END $$;
+    """))
 
-    # заполнить старые данные
     db.execute(text("UPDATE payments SET created_at = NOW() WHERE created_at IS NULL"))
 
     db.commit()
 
-    return {"status": "ok"}
+    return {"status": "fixed"}
 
 @app.get("/stats/daily")
 def stats_daily():
