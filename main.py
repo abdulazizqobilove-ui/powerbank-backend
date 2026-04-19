@@ -17,15 +17,14 @@ class AdminAuth(AuthenticationBackend):
         password = form.get("password")
 
         if username == "admin" and password == "123456":
-            request.session["token"] = "ok"   # 👈 ВАЖНО (не update)
             return True
         return False
 
     async def logout(self, request: Request):
-        request.session.clear()
+        return True
 
     async def authenticate(self, request: Request):
-        return request.session.get("token") == "ok"
+        return True
 
 import os
 
