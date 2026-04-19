@@ -55,7 +55,6 @@ class Payment(Base):
     rental_id = Column(Integer)
     amount = Column(Float)
     status = Column(String)  # pending / paid
-    created_at = Column(DateTime, default=datetime.utcnow)
 
 class User(Base):
     __tablename__ = "users"
@@ -547,23 +546,13 @@ from datetime import datetime
 def get_stats():
     db = SessionLocal()
 
-    now = datetime.utcnow()
-    today_start = datetime(now.year, now.month, now.day)
-    month_start = datetime(now.year, now.month, 1)
-
     payments = db.query(Payment).filter(Payment.status == "paid").all()
 
     total = sum(p.amount for p in payments)
 
-    today = sum(
-        p.amount for p in payments
-        if p.created_at and p.created_at >= today_start
-    )
-
-    month = sum(
-        p.amount for p in payments
-        if p.created_at and p.created_at >= month_start
-    )
+    # 💥 временно
+    today = total
+    month = total
 
     unpaid = db.query(Rental).filter(Rental.payment_status == "waiting").count()
 
