@@ -561,7 +561,26 @@ class RentalAdmin(ModelView, model=Rental):
 class PaymentAdmin(ModelView, model=Payment):
     column_list = [Payment.id, Payment.rental_id, Payment.amount, Payment.status]
 
+    def amount_formatted(self, obj):
+        return f"{obj.amount} сум"
+
+    column_formatters = {
+        Payment.amount: lambda m, a: f"{m.amount} сум"
+    }
+
 admin.add_view(UserAdmin)
 admin.add_view(CardAdmin)
 admin.add_view(RentalAdmin)
 admin.add_view(PaymentAdmin)
+
+@app.get("/admin/stats")
+def get_stats():
+    db = SessionLocal()
+
+    total = db.query(Payment).filter(Payment.status == "paid").all()
+    total_sum = sum(p.amount for p in total)
+
+    return {
+        "total_income": total_sum,
+        "count": len(total)
+    }
