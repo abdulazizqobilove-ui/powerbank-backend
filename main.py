@@ -49,12 +49,16 @@ class Rental(Base):
     cost = Column(Float, default=0)
     payment_status = Column(String, default="none")
 
+from datetime import datetime
+
 class Payment(Base):
     __tablename__ = "payments"
     id = Column(Integer, primary_key=True)
     rental_id = Column(Integer)
     amount = Column(Float)
-    status = Column(String)  # pending / paid
+    status = Column(String)
+
+    created_at = Column(DateTime, default=datetime.utcnow)  # 🔥 ВОТ ЭТО
 
 class User(Base):
     __tablename__ = "users"
