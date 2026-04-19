@@ -593,11 +593,40 @@ def stats_daily():
     payments = db.query(Payment).filter(Payment.status == "paid").all()
 
     for p in payments:
+        if not p.created_at:
+            continue  # ❗ пропускаем пустые
+
         day = p.created_at.strftime("%Y-%m-%d")
 
         if day not in result:
             result[day] = 0
 
         result[day] += p.amount
+
+    return result
+
+from datetime import datetime, timedelta
+
+@app.get("/stats/7days")
+def stats_7days():
+    db = SessionLocal()
+
+    result = {}
+    today = datetime.utcnow()
+
+    for i in range(7):
+        day = (today - timedelta(days=i)).strftime("%Y-%m-%d")
+        result[day] = 0
+
+    payments = db.query(Payment).filter(Payment.status == "paid").all()
+
+    for p in payments:
+        if not p.created_at:
+            continue  # ❗ важно
+
+        day = p.created_at.strftime("%Y-%m-%d")
+
+        if day in result:
+            result[day] += p.amount
 
     return result
