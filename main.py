@@ -576,3 +576,22 @@ def fix():
     db.commit()
 
     return {"fixed": len(payments)}
+
+from sqlalchemy import text
+
+@app.get("/fix-db")
+def fix_db():
+    db = SessionLocal()
+
+    try:
+        # добавить колонку
+        db.execute(text("ALTER TABLE payments ADD COLUMN created_at TIMESTAMP"))
+    except:
+        pass  # если уже есть — не упадёт
+
+    # заполнить старые данные
+    db.execute(text("UPDATE payments SET created_at = NOW() WHERE created_at IS NULL"))
+
+    db.commit()
+
+    return {"status": "ok"}
