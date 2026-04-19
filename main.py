@@ -589,12 +589,11 @@ def stats_daily():
     payments = db.query(Payment).filter(Payment.status == "paid").all()
 
     for p in payments:
-        if p.created_at:
-            day = p.created_at.strftime("%Y-%m-%d")
+        day = "today"  # временно
 
-            if day not in result:
-                result[day] = 0
+        if day not in result:
+            result[day] = 0
 
-            result[day] += p.amount
+        result[day] += p.amount
 
     return result
