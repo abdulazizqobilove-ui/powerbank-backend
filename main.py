@@ -579,3 +579,22 @@ def fix_db():
     db.commit()
 
     return {"status": "ok"}
+
+@app.get("/stats/daily")
+def stats_daily():
+    db = SessionLocal()
+
+    result = {}
+
+    payments = db.query(Payment).filter(Payment.status == "paid").all()
+
+    for p in payments:
+        if p.created_at:
+            day = p.created_at.strftime("%Y-%m-%d")
+
+            if day not in result:
+                result[day] = 0
+
+            result[day] += p.amount
+
+    return result
