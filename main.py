@@ -3,7 +3,7 @@ from pydantic import BaseModel
 from datetime import datetime
 import uuid
 
-from sqlalchemy import create_engine, Column, Integer, String, DateTime, Float
+from sqlalchemy import create_engine, Column, Integer, String, DateTime, Float, text
 from sqlalchemy.orm import declarative_base, sessionmaker
 
 from sqladmin import Admin, ModelView
@@ -621,6 +621,7 @@ def stats_7days():
     result = {}
     today = datetime.utcnow()
 
+    # создаём 7 дней
     for i in range(7):
         day = (today - timedelta(days=i)).strftime("%Y-%m-%d")
         result[day] = 0
@@ -629,7 +630,7 @@ def stats_7days():
 
     for p in payments:
         if not p.created_at:
-            continue  # ❗ важно
+            continue
 
         day = p.created_at.strftime("%Y-%m-%d")
 
