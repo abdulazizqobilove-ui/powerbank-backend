@@ -57,11 +57,7 @@ Base = declarative_base()
 # 🔥 ADMIN (после engine!)
 from sqladmin import Admin
 
-admin = Admin(
-    app=app,
-    engine=engine,
-    authentication_backend=AdminAuth(secret_key="secret123")
-)
+admin = Admin(app=app, engine=engine)
 
 class Card(Base):
     __tablename__ = "cards"
