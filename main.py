@@ -540,14 +540,43 @@ admin.add_view(CardAdmin)
 admin.add_view(RentalAdmin)
 admin.add_view(PaymentAdmin)
 
+from datetime import datetime, timedelta
+
 @app.get("/stats")
 def get_stats():
     db = SessionLocal()
 
-    total = db.query(Payment).filter(Payment.status == "paid").all()
-    total_sum = sum(p.amount for p in total)
+    now = datetime.now()
+    today_start = datetime(now.year, now.month, now.day)
+    month_start = datetime(now.year, now.month, 1)
+
+    # все оплаченные платежи
+    payments = db.query(Payment).filter(Payment.status == "paid").all()
+
+    total = sum(p.amount for p in payments)
+
+    today = sum(
+        p.amount for p in payments
+        if db.query(Rental).filter(
+            Rental.id == p.rental_id,
+            Rental.end_time >= today_start
+        ).first()
+    )
+
+    month = sum(
+        p.amount for p in payments
+        if db.query(Rental).filter(
+            Rental.id == p.rental_id,
+            Rental.end_time >= month_start
+        ).first()
+    )
+
+    # долги
+    unpaid = db.query(Rental).filter(Rental.payment_status == "waiting").count()
 
     return {
-        "total_income": total_sum,
-        "count": len(total)
+        "total_income": total,
+        "today_income": today,
+        "month_income": month,
+        "unpaid_rentals": unpaid
     }
