@@ -573,3 +573,17 @@ def get_stats():
         "month_income": month,
         "unpaid_rentals": unpaid
     }
+
+    @app.get("/fix")
+def fix():
+    db = SessionLocal()
+
+    payments = db.query(Payment).all()
+
+    for p in payments:
+        if p.created_at is None:
+            p.created_at = datetime.utcnow()
+
+    db.commit()
+
+    return {"fixed": len(payments)}
