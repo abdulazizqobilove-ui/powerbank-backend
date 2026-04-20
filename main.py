@@ -739,6 +739,33 @@ def dashboard():
         "top_users": top_users
     }
 
+@app.get("/stats/debts")
+def debts():
+    db = SessionLocal()
+
+    rentals = db.query(Rental).filter(Rental.payment_status == "waiting").all()
+
+    total_debt = 0
+    users = {}
+
+    for r in rentals:
+        amount = getattr(r, "price", 0)
+
+        total_debt += amount
+
+        user_id = r.user_id
+
+        if user_id not in users:
+            users[user_id] = 0
+
+        users[user_id] += amount
+
+    return {
+        "total_debt": total_debt,
+        "debtors_count": len(users),
+        "users": users
+    }
+
 from fastapi.responses import HTMLResponse
 
 @app.get("/dashboard-ui", response_class=HTMLResponse)
