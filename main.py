@@ -731,13 +731,38 @@ def dashboard():
     top_users = dict(sorted(users.items(), key=lambda x: x[1], reverse=True)[:5])
 
     # =====================
+    # 🔴 ДОЛГИ
+    # =====================
+    rentals = db.query(Rental).filter(Rental.payment_status == "waiting").all()
+
+    total_debt = 0
+    debt_users = {}
+
+    for r in rentals:
+        amount = getattr(r, "price", 0)
+
+        total_debt += amount
+
+        user_id = r.user_id
+
+        if user_id not in debt_users:
+            debt_users[user_id] = 0
+
+        debt_users[user_id] += amount
+    
+    # =====================
     return {
-        "total_income": total_income,
-        "today_income": today_income,
-        "active_rentals": active,
-        "daily": days,
-        "top_users": top_users
+    "total_income": total_income,
+    "today_income": today_income,
+    "active_rentals": active,
+    "daily": days,
+    "top_users": top_users,
+    "debts": {
+        "total_debt": total_debt,
+        "debtors_count": len(debt_users),
+        "users": debt_users
     }
+}
 
 @app.get("/stats/debts")
 def debts():
