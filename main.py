@@ -668,3 +668,73 @@ def active_rentals():
     active = db.query(Rental).filter(Rental.status == "active").count()
 
     return {"active": active}
+
+from datetime import datetime, timedelta
+
+@app.get("/dashboard")
+def dashboard():
+    db = SessionLocal()
+
+    # =====================
+    # 💰 ДОХОД
+    # =====================
+    payments = db.query(Payment).filter(Payment.status == "paid").all()
+
+    total_income = sum(p.amount for p in payments)
+
+    # сегодня
+    today_date = datetime.utcnow().date()
+    today_income = sum(
+        p.amount for p in payments
+        if p.created_at and p.created_at.date() == today_date
+    )
+
+    # =====================
+    # 📈 7 ДНЕЙ
+    # =====================
+    days = {}
+    for i in range(7):
+        d = (datetime.utcnow() - timedelta(days=i)).strftime("%Y-%m-%d")
+        days[d] = 0
+
+    for p in payments:
+        if not p.created_at:
+            continue
+
+        d = p.created_at.strftime("%Y-%m-%d")
+        if d in days:
+            days[d] += p.amount
+
+    # =====================
+    # 🔋 АКТИВНЫЕ АРЕНДЫ
+    # =====================
+    active = db.query(Rental).filter(Rental.status == "active").count()
+
+    # =====================
+    # 👤 ТОП ПОЛЬЗОВАТЕЛИ
+    # =====================
+    users = {}
+
+    for p in payments:
+        rental = db.query(Rental).filter(Rental.id == p.rental_id).first()
+        if not rental:
+            continue
+
+        user_id = rental.user_id
+
+        if user_id not in users:
+            users[user_id] = 0
+
+        users[user_id] += p.amount
+
+    # сортировка топа
+    top_users = dict(sorted(users.items(), key=lambda x: x[1], reverse=True)[:5])
+
+    # =====================
+    return {
+        "total_income": total_income,
+        "today_income": today_income,
+        "active_rentals": active,
+        "daily": days,
+        "top_users": top_users
+    }
