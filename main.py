@@ -738,3 +738,60 @@ def dashboard():
         "daily": days,
         "top_users": top_users
     }
+
+from fastapi.responses import HTMLResponse
+
+@app.get("/dashboard-ui", response_class=HTMLResponse)
+def dashboard_ui():
+    return """
+    <html>
+    <head>
+        <title>Dashboard</title>
+        <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+        <style>
+            body { font-family: Arial; background: #111; color: white; padding: 20px; }
+            .card { background: #222; padding: 20px; border-radius: 10px; margin: 10px 0; }
+            .row { display: flex; gap: 20px; }
+        </style>
+    </head>
+    <body>
+
+        <h1>🚀 Powerbank Dashboard</h1>
+
+        <div class="row">
+            <div class="card">💰 Total: <span id="total"></span></div>
+            <div class="card">📅 Today: <span id="today"></span></div>
+            <div class="card">🔋 Active: <span id="active"></span></div>
+        </div>
+
+        <div class="card">
+            <canvas id="chart"></canvas>
+        </div>
+
+        <script>
+            fetch('/dashboard')
+                .then(res => res.json())
+                .then(data => {
+                    document.getElementById('total').innerText = data.total_income;
+                    document.getElementById('today').innerText = data.today_income;
+                    document.getElementById('active').innerText = data.active_rentals;
+
+                    const labels = Object.keys(data.daily);
+                    const values = Object.values(data.daily);
+
+                    new Chart(document.getElementById('chart'), {
+                        type: 'line',
+                        data: {
+                            labels: labels,
+                            datasets: [{
+                                label: 'Income',
+                                data: values
+                            }]
+                        }
+                    });
+                });
+        </script>
+
+    </body>
+    </html>
+    """
