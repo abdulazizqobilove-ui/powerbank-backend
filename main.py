@@ -638,3 +638,25 @@ def stats_7days():
             result[day] += p.amount
 
     return result
+
+@app.get("/stats/top-users")
+def top_users():
+    db = SessionLocal()
+
+    result = {}
+
+    payments = db.query(Payment).filter(Payment.status == "paid").all()
+
+    for p in payments:
+        rental = db.query(Rental).filter(Rental.id == p.rental_id).first()
+        if not rental:
+            continue
+
+        user_id = rental.user_id
+
+        if user_id not in result:
+            result[user_id] = 0
+
+        result[user_id] += p.amount
+
+    return result
