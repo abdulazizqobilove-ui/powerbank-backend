@@ -28,7 +28,7 @@ Base = declarative_base()
 # 🔥 ADMIN (после engine!)
 from sqladmin import Admin
 
-admin = Admin(app=app, engine=engine)
+admin = Admin(app=app, engine=engine, templates_dir="templates")
 
 class Card(Base):
     __tablename__ = "cards"
