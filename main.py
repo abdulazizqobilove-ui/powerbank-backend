@@ -660,3 +660,11 @@ def top_users():
         result[user_id] += p.amount
 
     return result
+
+@app.get("/stats/active")
+def active_rentals():
+    db = SessionLocal()
+
+    active = db.query(Rental).filter(Rental.status == "active").count()
+
+    return {"active": active}
