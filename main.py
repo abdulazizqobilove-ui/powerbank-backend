@@ -820,6 +820,19 @@ def dashboard_ui():
             <canvas id="chart"></canvas>
         </div>
 
+        <!-- 👤 TOP USERS -->
+        <div class="card">
+            <h2>👤 Top Users</h2>
+            <ul id="top-users"></ul>
+        </div>
+
+        <!-- 🔴 DEBTS -->
+        <div class="card">
+            <h2>🔴 Debts</h2>
+            <div>Total: <span id="debt-total"></span></div>
+            <ul id="debt-users"></ul>
+        </div>
+
         <script>
             fetch('/dashboard')
                 .then(res => res.json())
@@ -841,6 +854,28 @@ def dashboard_ui():
                             }]
                         }
                     });
+
+                    // 👤 TOP USERS
+                    const topList = document.getElementById('top-users');
+                    topList.innerHTML = "";
+
+                    for (const user in data.top_users) {
+                        const li = document.createElement('li');
+                        li.innerText = "User " + user + " — " + data.top_users[user];
+                        topList.appendChild(li);
+                    }
+
+                    // 🔴 DEBTS
+                    document.getElementById('debt-total').innerText = data.debts.total_debt;
+
+                    const debtList = document.getElementById('debt-users');
+                    debtList.innerHTML = "";
+
+                    for (const user in data.debts.users) {
+                        const li = document.createElement('li');
+                        li.innerText = "User " + user + " — " + data.debts.users[user];
+                        debtList.appendChild(li);
+                    }
                 });
         </script>
 
