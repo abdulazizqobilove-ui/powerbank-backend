@@ -125,56 +125,66 @@ def get_stations():
 @app.post("/cards/add")
 def add_card(data: CardRequest):
     db = SessionLocal()
+    try:
+        db.query(Card).filter(Card.user_id == data.user_id).update({"is_active": 0})
 
-    db.query(Card).filter(Card.user_id == data.user_id).update({"is_active": 0})
+        card = Card(
+            user_id=data.user_id,
+            brand="VISA",
+            last4=data.number[-4:],
+            is_active=1
+        )
 
-    card = Card(
-        user_id=data.user_id,
-        brand="VISA",
-        last4=data.number[-4:],
-        is_active=1
-    )
+        db.add(card)
+        db.commit()
+        db.refresh(card)
 
-    db.add(card)
-    db.commit()
-    db.refresh(card)
-
-    return {
-        "id": card.id,
-        "brand": card.brand,
-        "last4": card.last4
-    }
+        return {
+            "id": card.id,
+            "brand": card.brand,
+            "last4": card.last4
+        }
+    finally:
+        db.close()
 
 @app.get("/cards/{user_id}")
 def get_cards(user_id: int):
     db = SessionLocal()
-    cards = db.query(Card).filter(Card.user_id == user_id).all()
+    try:
+        cards = db.query(Card).filter(Card.user_id == user_id).all()
 
-    return [
-        {
-            "id": c.id,
-            "brand": c.brand,
-            "last4": c.last4,
-            "is_active": c.is_active
-        } for c in cards
-    ]
+        return [
+            {
+                "id": c.id,
+                "brand": c.brand,
+                "last4": c.last4,
+                "is_active": c.is_active
+            } for c in cards
+        ]
+    finally:
+        db.close()
 
 @app.post("/cards/select")
 def select_card(data: dict):
     db = SessionLocal()
+    try:
+        db.query(Card).filter(Card.user_id == data["user_id"]).update({"is_active": 0})
+        db.query(Card).filter(Card.id == data["card_id"]).update({"is_active": 1})
 
-    db.query(Card).filter(Card.user_id == data["user_id"]).update({"is_active": 0})
-    db.query(Card).filter(Card.id == data["card_id"]).update({"is_active": 1})
-
-    db.commit()
-    return {"status": "ok"}
+        db.commit()
+        return {"status": "ok"}
+    finally:
+        db.close()
 
 @app.delete("/cards/{card_id}")
 def delete_card(card_id: int):
     db = SessionLocal()
-    db.query(Card).filter(Card.id == card_id).delete()
-    db.commit()
-    return {"status": "deleted"}
+    try:
+        db.query(Card).filter(Card.id == card_id).delete()
+        db.commit()
+        return {"status": "deleted"}
+    finally:
+        db.close()
 
 # =========================
 # 🔋 RENT
@@ -183,44 +193,49 @@ def delete_card(card_id: int):
 @app.post("/rent")
 def rent_powerbank(data: RentRequest):
     db = SessionLocal()
+    try:
+        active = db.query(Rental).filter(
+            Rental.user_id == data.user_id,
+            Rental.status == "active"
+        ).first()
 
-    active = db.query(Rental).filter(
-        Rental.user_id == data.user_id,
-        Rental.status == "active"
-    ).first()
+        if active:
+            raise HTTPException(400, "Already has active rental")
 
-    if active:
-        raise HTTPException(400, "Already has active rental")
+        rental = Rental(
+            user_id=data.user_id,
+            station_id=data.station_id,
+            status="active",
+            start_time=datetime.now()
+        )
 
-    rental = Rental(
-        user_id=data.user_id,
-        station_id=data.station_id,
-        status="active",
-        start_time=datetime.now()
-    )
+        db.add(rental)
+        db.commit()
+        db.refresh(rental)
 
-    db.add(rental)
-    db.commit()
-    db.refresh(rental)
-
-    return {"id": rental.id}
+        return {"id": rental.id}
+    finally:
+        db.close()
 
 @app.get("/rentals/{user_id}")
 def get_rentals(user_id: int):
     db = SessionLocal()
-    rentals = db.query(Rental).filter(Rental.user_id == user_id).all()
+    try:
+        rentals = db.query(Rental).filter(Rental.user_id == user_id).all()
 
-    return [
-    {
-        "id": r.id,
-        "status": r.status,
-        "start_time": r.start_time.isoformat(),
-        "end_time": r.end_time.isoformat() if r.end_time else None,
-        "cost": r.cost,
-        "payment_status": r.payment_status  # 👈 ВОТ ЭТО ДОБАВИЛ
-    }
-    for r in rentals
-]
+        return [
+            {
+                "id": r.id,
+                "status": r.status,
+                "start_time": r.start_time.isoformat(),
+                "end_time": r.end_time.isoformat() if r.end_time else None,
+                "cost": r.cost,
+                "payment_status": r.payment_status
+            }
+            for r in rentals
+        ]
+    finally:
+        db.close()
 
 # =========================
 # 🔁 RETURN
@@ -229,47 +244,48 @@ def get_rentals(user_id: int):
 @app.post("/return")
 async def return_powerbank(data: ReturnRequest):
     db = SessionLocal()
+    try:
+        rental = db.query(Rental).filter(
+            Rental.id == data.rental_id,
+            Rental.status == "active"
+        ).first()
 
-    rental = db.query(Rental).filter(
-        Rental.id == data.rental_id,
-        Rental.status == "active"
-    ).first()
+        if not rental:
+            raise HTTPException(404, "Not found")
 
-    if not rental:
-        raise HTTPException(404, "Not found")
+        rental.status = "returned"
+        rental.end_time = datetime.now()
 
-    rental.status = "returned"
-    rental.end_time = datetime.now()
+        duration = rental.end_time - rental.start_time
+        hours = duration.total_seconds() / 3600
 
-    duration = rental.end_time - rental.start_time
-    hours = duration.total_seconds() / 3600
+        if hours <= 1:
+            cost = 7
+        elif hours <= 24:
+            cost = 14
+        else:
+            extra_days = int((hours - 24) / 24) + 1
+            cost = 14 + (extra_days * 14)
 
-    if hours <= 1:
-        cost = 7
-    elif hours <= 24:
-        cost = 14
-    else:
-        extra_days = int((hours - 24) / 24) + 1
-        cost = 14 + (extra_days * 14)
+        rental.cost = cost
+        rental.payment_status = "waiting"
 
-    rental.cost = cost
-    rental.payment_status = "waiting"
+        db.commit()
 
-    db.commit()
+        ws = connections.get(rental.user_id)
+        if ws:
+            await ws.send_json({
+                "type": "rental_finished",
+                "cost": cost
+            })
 
-    # 🔥 FIXED SOCKET
-    ws = connections.get(rental.user_id)
-    if ws:
-        await ws.send_json({
+        return {
             "type": "rental_finished",
-            "cost": cost
-        })
-
-    return {
-        "type": "rental_finished",
-        "cost": cost,
-        "rental_id": rental.id
-    }
+            "cost": cost,
+            "rental_id": rental.id
+        }
+    finally:
+        db.close()
 
 # =========================
 # 💰 PAYMENTS
@@ -355,34 +371,38 @@ def create_payment(data: PaymentRequest):
 @app.get("/payment/status/{rental_id}")
 def payment_status(rental_id: int):
     db = SessionLocal()
+    try:
+        rental = db.query(Rental).filter(Rental.id == rental_id).first()
 
-    rental = db.query(Rental).filter(Rental.id == rental_id).first()
+        if not rental:
+            raise HTTPException(404, "Not found")
 
-    if not rental:
-        raise HTTPException(404, "Not found")
-
-    return {
-        "status": rental.payment_status
-    }
+        return {
+            "status": rental.payment_status
+        }
+    finally:
+        db.close()
 
 @app.post("/payment/confirm")
 def confirm_payment(data: ConfirmPaymentRequest):
     db = SessionLocal()
+    try:
+        payment = db.query(Payment).filter(Payment.id == data.payment_id).first()
 
-    payment = db.query(Payment).filter(Payment.id == data.payment_id).first()
+        if not payment:
+            raise HTTPException(404, "Payment not found")
 
-    if not payment:
-        raise HTTPException(404, "Payment not found")
+        payment.status = "paid"
 
-    payment.status = "paid"
+        rental = db.query(Rental).filter(Rental.id == payment.rental_id).first()
+        if rental:
+            rental.payment_status = "paid"
 
-    rental = db.query(Rental).filter(Rental.id == payment.rental_id).first()
-    if rental:
-        rental.payment_status = "paid"
+        db.commit()
 
-    db.commit()
-
-    return {"status": "paid"}
+        return {"status": "paid"}
+    finally:
+        db.close()
 
 # =========================
 # 🔌 WEBSOCKET
@@ -397,9 +417,9 @@ async def websocket_endpoint(ws: WebSocket, user_id: int):
         while True:
             await ws.receive_text()
     except:
+        pass
+    finally:
         connections.pop(user_id, None)
-
-
 # =========================
 # 💰 WEBHOOK (ОПЛАТА)
 # =========================
