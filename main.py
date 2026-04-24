@@ -552,8 +552,13 @@ async def payment_webhook(request: Request):
 
 @app.get("/create_token")
 def create_token():
+    db = SessionLocal()
+
     token = str(uuid.uuid4())
-    login_tokens[token] = None
+
+    db.add(LoginToken(token=token))
+    db.commit()
+
     return {"token": token}
 
 @app.post("/telegram_webhook")
@@ -571,32 +576,32 @@ async def telegram_webhook(request: Request):
 
         text = message.get("text", "")
 
-if text.startswith("/start"):
-    parts = text.split(" ")
+        if text.startswith("/start"):
+            parts = text.split(" ")
 
-    if len(parts) > 1:
-        token = parts[1]
+            if len(parts) > 1:
+                token = parts[1]
 
-        db = SessionLocal()
-        lt = db.query(LoginToken).filter(LoginToken.token == token).first()
+                db = SessionLocal()
+                lt = db.query(LoginToken).filter(LoginToken.token == token).first()
 
-        if lt:
-            user = db.query(User).filter(User.telegram_id == chat_id).first()
+                if lt:
+                    user = db.query(User).filter(User.telegram_id == chat_id).first()
 
-            if not user:
-                user = User(
-                    telegram_id=chat_id,
-                    name=full_name
-                )
-                db.add(user)
-            else:
-                user.name = full_name
+                    if not user:
+                        user = User(
+                            telegram_id=chat_id,
+                            name=full_name
+                        )
+                        db.add(user)
+                    else:
+                        user.name = full_name
 
-            db.commit()
-            db.refresh(user)
+                    db.commit()
+                    db.refresh(user)
 
-            lt.user_id = user.id
-            db.commit()
+                    lt.user_id = user.id
+                    db.commit()
 
     except Exception as e:
         print("TG ERROR:", e)
