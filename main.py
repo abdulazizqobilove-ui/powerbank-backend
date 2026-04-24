@@ -303,6 +303,7 @@ CALLBACK_URL = "https://powerbank-backend.onrender.com/payment/webhook"  # 👈 
 
 @app.post("/payment/create")
 def create_payment(data: PaymentRequest):
+    print("NEW PAYMENT CODE")
     db = SessionLocal()
 
     try:
@@ -311,20 +312,15 @@ def create_payment(data: PaymentRequest):
         if not rental:
             raise HTTPException(404, "Rental not found")
 
-        # ❗ если уже оплачено — не создаём заново
         if rental.payment_status == "paid":
             raise HTTPException(400, "Already paid")
 
-        # ✅ проверяем карту
-        card = db.query(Card).filter(
-            Card.user_id == rental.user_id,
-            Card.is_active == 1
-        ).first()
+        if rental.status != "returned":
+            raise HTTPException(400, "Rental not finished")
 
-        if not card:
-            raise HTTPException(400, "No active card")
+        if not rental.cost or rental.cost <= 0:
+            raise HTTPException(400, "Invalid cost")
 
-        # ✅ создаём платеж
         payment = Payment(
             rental_id=rental.id,
             amount=rental.cost,
@@ -335,35 +331,9 @@ def create_payment(data: PaymentRequest):
         db.commit()
         db.refresh(payment)
 
-        # ✅ запрос в Alif
-        res = requests.post(
-            ALIF_API,
-            json={
-                "amount": int(rental.cost * 100),
-                "order_id": str(payment.id),  # 🔥 ключевая связь
-                "description": "Powerbank rent",
-                "callback_url": CALLBACK_URL  # 🔥 добавили webhook
-            },
-            headers={
-                "Authorization": f"Bearer {API_KEY}"
-            }
-        )
-
-        # ❗ проверка ответа
-        if res.status_code != 200:
-            raise HTTPException(400, "Alif API error")
-
-        result = res.json()
-        payment_url = result.get("payment_url")
-
-        if not payment_url:
-            raise HTTPException(400, "Payment creation failed")
-
-        return {"payment_url": payment_url}
-
-    except Exception as e:
-        print("PAYMENT ERROR:", e)
-        raise
+        return {
+            "payment_url": f"https://google.com?q=pay_{payment.id}"
+        }
 
     finally:
         db.close()
