@@ -67,8 +67,6 @@ class User(Base):
     phone = Column(String, nullable=True)
     name = Column(String, nullable=True)
 
-Base.metadata.create_all(bind=engine)
-
 # =========================
 # ⚙️ APP
 # =========================
@@ -877,6 +875,8 @@ class LoginToken(Base):
     __tablename__ = "login_tokens"
     token = Column(String, primary_key=True)
     user_id = Column(Integer, nullable=True)
+
+Base.metadata.create_all(bind=engine)
 
 @app.get("/stats/debts")
 def debts():
