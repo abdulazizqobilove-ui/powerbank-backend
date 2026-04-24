@@ -74,7 +74,6 @@ Base.metadata.create_all(bind=engine)
 # =========================
 
 connections = {}
-login_tokens = {}
 
 # =========================
 # 📦 MODELS
@@ -572,30 +571,32 @@ async def telegram_webhook(request: Request):
 
         text = message.get("text", "")
 
-        if text.startswith("/start"):
-            parts = text.split(" ")
+if text.startswith("/start"):
+    parts = text.split(" ")
 
-            if len(parts) > 1:
-                token = parts[1]
+    if len(parts) > 1:
+        token = parts[1]
 
-                if token in login_tokens:
-                    db = SessionLocal()
+        db = SessionLocal()
+        lt = db.query(LoginToken).filter(LoginToken.token == token).first()
 
-                    user = db.query(User).filter(User.telegram_id == chat_id).first()
+        if lt:
+            user = db.query(User).filter(User.telegram_id == chat_id).first()
 
-                    if not user:
-                        user = User(
-                            telegram_id=chat_id,
-                            name=full_name
-                        )
-                        db.add(user)
-                    else:
-                        user.name = full_name
+            if not user:
+                user = User(
+                    telegram_id=chat_id,
+                    name=full_name
+                )
+                db.add(user)
+            else:
+                user.name = full_name
 
-                    db.commit()
-                    db.refresh(user)
+            db.commit()
+            db.refresh(user)
 
-                    login_tokens[token] = user.id
+            lt.user_id = user.id
+            db.commit()
 
     except Exception as e:
         print("TG ERROR:", e)
@@ -604,13 +605,14 @@ async def telegram_webhook(request: Request):
 
 @app.get("/check_token/{token}")
 def check_token(token: str):
-    user_id = login_tokens.get(token)
+    db = SessionLocal()
 
-    if not user_id:
+    lt = db.query(LoginToken).filter(LoginToken.token == token).first()
+
+    if not lt or not lt.user_id:
         return {"status": "waiting"}
 
-    db = SessionLocal()
-    user = db.query(User).filter(User.id == user_id).first()
+    user = db.query(User).filter(User.id == lt.user_id).first()
 
     return {
         "status": "ok",
@@ -865,6 +867,11 @@ def dashboard():
         "users": debt_users
     }
 }
+
+class LoginToken(Base):
+    __tablename__ = "login_tokens"
+    token = Column(String, primary_key=True)
+    user_id = Column(Integer, nullable=True)
 
 @app.get("/stats/debts")
 def debts():
