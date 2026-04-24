@@ -344,7 +344,7 @@ def create_payment(data: PaymentRequest):
             finally:
                 db2.close()
 
-       # threading.Thread(target=fake_pay).start()
+        threading.Thread(target=fake_pay).start()
 
         return {
             "payment_url": f"https://google.com?q=pay_{payment.id}"
