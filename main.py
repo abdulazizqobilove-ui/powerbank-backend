@@ -303,13 +303,14 @@ CALLBACK_URL = "https://powerbank-backend.onrender.com/payment/webhook"  # 👈 
 
 @app.post("/payment/create")
 def create_payment(data: PaymentRequest):
-    print("NEW PAYMENT CODE")
+    print("NEW PAYMENT CODE", data.rental_id)
+
     db = SessionLocal()
 
     try:
         rental = db.query(Rental).filter(Rental.id == data.rental_id).first()
 
-        if not rental:
+        if rental is None:
             raise HTTPException(404, "Rental not found")
 
         if rental.payment_status == "paid":
@@ -334,6 +335,10 @@ def create_payment(data: PaymentRequest):
         return {
             "payment_url": f"https://google.com?q=pay_{payment.id}"
         }
+
+    except Exception as e:
+        print("PAYMENT ERROR:", e)
+        raise
 
     finally:
         db.close()
