@@ -363,9 +363,21 @@ def force_close():
         duration = datetime.now() - r.start_time
         hours = duration.total_seconds() / 3600
 
-        if hours > 48:  # 👈 2 дня
+        # 💰 считаем стоимость
+        if hours <= 1:
+            cost = 7
+        elif hours <= 24:
+            cost = 14
+        else:
+            extra_days = int((hours - 24) / 24) + 1
+            cost = 14 + (extra_days * 14)
+
+        MAX_COST = 150
+
+        # 💣 закрываем только если дошло до лимита
+        if cost >= MAX_COST:
             r.status = "lost"
-            r.cost = 150
+            r.cost = MAX_COST
             r.payment_status = "waiting"
             r.end_time = datetime.now()
 
