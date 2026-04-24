@@ -551,17 +551,21 @@ async def payment_webhook(request: Request):
 @app.get("/create_token")
 def create_token():
     db = SessionLocal()
+    try:
+        token = str(uuid.uuid4())
 
-    token = str(uuid.uuid4())
+        db.add(LoginToken(token=token))
+        db.commit()
 
-    db.add(LoginToken(token=token))
-    db.commit()
-
-    return {"token": token}
+        return {"token": token}
+    finally:
+        db.close()
 
 @app.post("/telegram_webhook")
 async def telegram_webhook(request: Request):
     data = await request.json()
+
+    db = SessionLocal()  # 👈 ВАЖНО
 
     try:
         message = data.get("message", {})
@@ -580,7 +584,6 @@ async def telegram_webhook(request: Request):
             if len(parts) > 1:
                 token = parts[1]
 
-                db = SessionLocal()
                 lt = db.query(LoginToken).filter(LoginToken.token == token).first()
 
                 if lt:
@@ -604,24 +607,29 @@ async def telegram_webhook(request: Request):
     except Exception as e:
         print("TG ERROR:", e)
 
+    finally:
+        db.close()  # 👈 ВОТ ГДЕ ДОЛЖЕН БЫТЬ
+
     return {"ok": True}
 
 @app.get("/check_token/{token}")
 def check_token(token: str):
     db = SessionLocal()
+    try:
+        lt = db.query(LoginToken).filter(LoginToken.token == token).first()
 
-    lt = db.query(LoginToken).filter(LoginToken.token == token).first()
+        if not lt or not lt.user_id:
+            return {"status": "waiting"}
 
-    if not lt or not lt.user_id:
-        return {"status": "waiting"}
+        user = db.query(User).filter(User.id == lt.user_id).first()
 
-    user = db.query(User).filter(User.id == lt.user_id).first()
-
-    return {
-        "status": "ok",
-        "user_id": user.id,
-        "name": user.name or ""
-    }
+        return {
+            "status": "ok",
+            "user_id": user.id,
+            "name": user.name or ""
+        }
+    finally:
+        db.close()
 
 # =========================
 # 🔥 ADMIN PANEL
