@@ -296,6 +296,8 @@ ALIF_API = "https://alif.shop/api/payment/create"
 API_KEY = "ТВОЙ_API_KEY"
 
 import requests
+import threading
+import time
 
 ALIF_API = "https://alif.shop/api/payment/create"
 API_KEY = "ТВОЙ_API_KEY"
@@ -303,24 +305,16 @@ CALLBACK_URL = "https://powerbank-backend.onrender.com/payment/webhook"  # 👈 
 
 @app.post("/payment/create")
 def create_payment(data: PaymentRequest):
-    print("NEW PAYMENT CODE", data.rental_id)
-
     db = SessionLocal()
 
     try:
         rental = db.query(Rental).filter(Rental.id == data.rental_id).first()
 
-        if rental is None:
+        if not rental:
             raise HTTPException(404, "Rental not found")
 
         if rental.payment_status == "paid":
             raise HTTPException(400, "Already paid")
-
-        if rental.status != "returned":
-            raise HTTPException(400, "Rental not finished")
-
-        if not rental.cost or rental.cost <= 0:
-            raise HTTPException(400, "Invalid cost")
 
         payment = Payment(
             rental_id=rental.id,
@@ -332,13 +326,29 @@ def create_payment(data: PaymentRequest):
         db.commit()
         db.refresh(payment)
 
+        # 🔥 АВТО ОПЛАТА ЧЕРЕЗ 3 СЕК
+        def fake_pay():
+            time.sleep(3)
+
+            db2 = SessionLocal()
+            try:
+                p = db2.query(Payment).filter(Payment.id == payment.id).first()
+                if p:
+                    p.status = "paid"
+
+                    r = db2.query(Rental).filter(Rental.id == p.rental_id).first()
+                    if r:
+                        r.payment_status = "paid"
+
+                db2.commit()
+            finally:
+                db2.close()
+
+        threading.Thread(target=fake_pay).start()
+
         return {
             "payment_url": f"https://google.com?q=pay_{payment.id}"
         }
-
-    except Exception as e:
-        print("PAYMENT ERROR:", e)
-        raise
 
     finally:
         db.close()
