@@ -180,9 +180,36 @@ def select_card(data: dict):
 def delete_card(card_id: int):
     db = SessionLocal()
     try:
-        db.query(Card).filter(Card.id == card_id).delete()
+        card = db.query(Card).filter(Card.id == card_id).first()
+
+        if not card:
+            raise HTTPException(404, "Card not found")
+
+        # 💣 сколько карт у пользователя
+        user_cards = db.query(Card).filter(
+            Card.user_id == card.user_id
+        ).all()
+
+        if len(user_cards) <= 1:
+            raise HTTPException(400, "Нельзя удалить последнюю карту")
+
+        was_active = card.is_active == 1
+
+        db.delete(card)
         db.commit()
+
+        # 🔥 если удалили активную → делаем другую активной
+        if was_active:
+            new_card = db.query(Card).filter(
+                Card.user_id == card.user_id
+            ).first()
+
+            if new_card:
+                new_card.is_active = 1
+                db.commit()
+
         return {"status": "deleted"}
+
     finally:
         db.close()
 
