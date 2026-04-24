@@ -194,6 +194,7 @@ def delete_card(card_id: int):
 def rent_powerbank(data: RentRequest):
     db = SessionLocal()
     try:
+        # ❌ 1. есть активная аренда
         active = db.query(Rental).filter(
             Rental.user_id == data.user_id,
             Rental.status == "active"
@@ -202,6 +203,25 @@ def rent_powerbank(data: RentRequest):
         if active:
             raise HTTPException(400, "Already has active rental")
 
+        # 💣 2. ЕСТЬ ДОЛГ
+        debt = db.query(Rental).filter(
+            Rental.user_id == data.user_id,
+            Rental.payment_status == "waiting"
+        ).first()
+
+        if debt:
+            raise HTTPException(400, "Сначала оплатите предыдущую аренду")
+
+        # 💳 3. ПРОВЕРКА КАРТЫ (ВОТ ЭТО МЫ ДОБАВИЛИ)
+        card = db.query(Card).filter(
+            Card.user_id == data.user_id,
+            Card.is_active == 1
+        ).first()
+
+        if not card:
+            raise HTTPException(400, "Добавьте карту")
+
+        # ✅ 4. создаём аренду
         rental = Rental(
             user_id=data.user_id,
             station_id=data.station_id,
@@ -214,6 +234,7 @@ def rent_powerbank(data: RentRequest):
         db.refresh(rental)
 
         return {"id": rental.id}
+
     finally:
         db.close()
 
@@ -253,12 +274,18 @@ async def return_powerbank(data: ReturnRequest):
         if not rental:
             raise HTTPException(404, "Not found")
 
-        rental.status = "returned"
+        if rental.status != "active":
+            raise HTTPException(400, "Уже завершено")
+
+        if rental.payment_status == "paid":
+            raise HTTPException(400, "Уже оплачено")
+
         rental.end_time = datetime.now()
 
         duration = rental.end_time - rental.start_time
         hours = duration.total_seconds() / 3600
 
+        # 💰 расчёт стоимости
         if hours <= 1:
             cost = 7
         elif hours <= 24:
@@ -266,6 +293,15 @@ async def return_powerbank(data: ReturnRequest):
         else:
             extra_days = int((hours - 24) / 24) + 1
             cost = 14 + (extra_days * 14)
+
+        # 💣 ЛИМИТ
+        MAX_COST = 150
+
+        if cost >= MAX_COST:
+            cost = MAX_COST
+            rental.status = "lost"
+        else:
+            rental.status = "returned"
 
         rental.cost = cost
         rental.payment_status = "waiting"
@@ -284,8 +320,30 @@ async def return_powerbank(data: ReturnRequest):
             "cost": cost,
             "rental_id": rental.id
         }
+
     finally:
         db.close()
+
+@app.post("/force-close")
+def force_close():
+    db = SessionLocal()
+
+    rentals = db.query(Rental).filter(
+        Rental.status == "active"
+    ).all()
+
+    for r in rentals:
+        duration = datetime.now() - r.start_time
+        hours = duration.total_seconds() / 3600
+
+        if hours > 48:  # 👈 2 дня
+            r.status = "lost"
+            r.cost = 150
+            r.payment_status = "waiting"
+            r.end_time = datetime.now()
+
+    db.commit()
+    return {"status": "ok"}
 
 # =========================
 # 💰 PAYMENTS
@@ -744,7 +802,7 @@ def dashboard():
     debt_users = {}
 
     for r in rentals:
-        amount = getattr(r, "price", 0)
+        amount = r.cost or 0
 
         total_debt += amount
 
@@ -779,7 +837,7 @@ def debts():
     users = {}
 
     for r in rentals:
-        amount = getattr(r, "price", 0)
+        amount = r.cost or 0
 
         total_debt += amount
 
