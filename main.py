@@ -38,6 +38,8 @@ class Card(Base):
     last4 = Column(String)
     is_active = Column(Integer)
 
+    position = Column(Integer, default=0)  # 🔥 ВОТ ЭТО ДОБАВЬ
+
 class Rental(Base):
     __tablename__ = "rentals"
     id = Column(Integer, primary_key=True)
@@ -123,14 +125,24 @@ def get_stations():
 def add_card(data: CardRequest):
     db = SessionLocal()
     try:
+        # ❗ сбрасываем активность
         db.query(Card).filter(Card.user_id == data.user_id).update({"is_active": 0})
 
+        # 🔥 НАХОДИМ ПОСЛЕДНЮЮ ПОЗИЦИЮ
+        last_card = db.query(Card).filter(
+            Card.user_id == data.user_id
+        ).order_by(Card.position.desc()).first()
+
+        next_position = last_card.position + 1 if last_card and last_card.position else 1
+
+        # 🔥 СОЗДАЁМ КАРТУ
         card = Card(
-            user_id=data.user_id,
-            brand="VISA",
-            last4=data.number[-4:],
-            is_active=1
-        )
+    user_id=data.user_id,
+    brand="VISA",
+    last4=data.number[-4:],
+    is_active=1,
+    position=next_position  # 🔥 ВОТ ЭТО ДОБАВЬ
+)
 
         db.add(card)
         db.commit()
@@ -141,6 +153,7 @@ def add_card(data: CardRequest):
             "brand": card.brand,
             "last4": card.last4
         }
+
     finally:
         db.close()
 
@@ -148,7 +161,9 @@ def add_card(data: CardRequest):
 def get_cards(user_id: int):
     db = SessionLocal()
     try:
-        cards = db.query(Card).filter(Card.user_id == user_id).all()
+        cards = db.query(Card).filter(
+    Card.user_id == user_id
+).order_by(Card.position.asc()).all()
 
         return [
             {
@@ -165,10 +180,29 @@ def get_cards(user_id: int):
 def select_card(data: dict):
     db = SessionLocal()
     try:
-        db.query(Card).filter(Card.user_id == data["user_id"]).update({"is_active": 0})
-        db.query(Card).filter(Card.id == data["card_id"]).update({"is_active": 1})
+        user_id = data["user_id"]
+        card_id = data["card_id"]
+
+        # 🔥 получаем выбранную карту
+        selected = db.query(Card).filter(Card.id == card_id).first()
+
+        if not selected:
+            return {"status": "error"}
+
+        # 🔥 уменьшаем position у всех
+        db.query(Card).filter(
+            Card.user_id == user_id
+        ).update({Card.position: Card.position + 1})
+
+        # 🔥 выбранную ставим первой
+        selected.position = 1
+
+        # 🔥 активность
+        db.query(Card).filter(Card.user_id == user_id).update({"is_active": 0})
+        selected.is_active = 1
 
         db.commit()
+
         return {"status": "ok"}
     finally:
         db.close()
