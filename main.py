@@ -137,12 +137,12 @@ def add_card(data: CardRequest):
 
         # 🔥 СОЗДАЁМ КАРТУ
         card = Card(
-    user_id=data.user_id,
-    brand="VISA",
-    last4=data.number[-4:],
-    is_active=1,
-    position=next_position  # 🔥 ВОТ ЭТО ДОБАВЬ
-)
+            user_id=data.user_id,
+            brand="VISA",
+            last4=data.number[-4:],
+            is_active=1,
+            position=next_position  # 👈 ВАЖНО
+        )
 
         db.add(card)
         db.commit()
@@ -161,9 +161,7 @@ def add_card(data: CardRequest):
 def get_cards(user_id: int):
     db = SessionLocal()
     try:
-        cards = db.query(Card).filter(
-    Card.user_id == user_id
-).order_by(Card.position.asc()).all()
+        cards = db.query(Card).filter(Card.user_id == user_id).all()
 
         return [
             {
@@ -180,16 +178,10 @@ def get_cards(user_id: int):
 def select_card(data: dict):
     db = SessionLocal()
     try:
-        db.query(Card).filter(
-            Card.user_id == data["user_id"]
-        ).update({"is_active": 0})
-
-        db.query(Card).filter(
-            Card.id == data["card_id"]
-        ).update({"is_active": 1})
+        db.query(Card).filter(Card.user_id == data["user_id"]).update({"is_active": 0})
+        db.query(Card).filter(Card.id == data["card_id"]).update({"is_active": 1})
 
         db.commit()
-
         return {"status": "ok"}
     finally:
         db.close()
