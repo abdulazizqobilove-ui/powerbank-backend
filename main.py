@@ -38,8 +38,6 @@ class Card(Base):
     last4 = Column(String)
     is_active = Column(Integer)
 
-    position = Column(Integer, default=0)  # 🔥 ВОТ ЭТО ДОБАВЬ
-
 class Rental(Base):
     __tablename__ = "rentals"
     id = Column(Integer, primary_key=True)
@@ -125,23 +123,15 @@ def get_stations():
 def add_card(data: CardRequest):
     db = SessionLocal()
     try:
-        # ❗ сбрасываем активность
+        # сбрасываем активную карту
         db.query(Card).filter(Card.user_id == data.user_id).update({"is_active": 0})
 
-        # 🔥 НАХОДИМ ПОСЛЕДНЮЮ ПОЗИЦИЮ
-        last_card = db.query(Card).filter(
-            Card.user_id == data.user_id
-        ).order_by(Card.position.desc()).first()
-
-        next_position = last_card.position + 1 if last_card and last_card.position else 1
-
-        # 🔥 СОЗДАЁМ КАРТУ
+        # создаём карту
         card = Card(
             user_id=data.user_id,
             brand="VISA",
             last4=data.number[-4:],
-            is_active=1,
-            position=next_position  # 👈 ВАЖНО
+            is_active=1
         )
 
         db.add(card)
@@ -156,6 +146,7 @@ def add_card(data: CardRequest):
 
     finally:
         db.close()
+
 
 @app.get("/cards/{user_id}")
 def get_cards(user_id: int):
@@ -174,6 +165,7 @@ def get_cards(user_id: int):
     finally:
         db.close()
 
+
 @app.post("/cards/select")
 def select_card(data: dict):
     db = SessionLocal()
@@ -186,6 +178,7 @@ def select_card(data: dict):
     finally:
         db.close()
 
+
 @app.delete("/cards/{card_id}")
 def delete_card(card_id: int):
     db = SessionLocal()
@@ -195,7 +188,7 @@ def delete_card(card_id: int):
         if not card:
             raise HTTPException(404, "Card not found")
 
-        # 💣 сколько карт у пользователя
+        # получаем все карты пользователя
         user_cards = db.query(Card).filter(
             Card.user_id == card.user_id
         ).all()
@@ -208,7 +201,7 @@ def delete_card(card_id: int):
         db.delete(card)
         db.commit()
 
-        # 🔥 если удалили активную → делаем другую активной
+        # если удалили активную — делаем другую активной
         if was_active:
             new_card = db.query(Card).filter(
                 Card.user_id == card.user_id
