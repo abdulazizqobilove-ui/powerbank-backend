@@ -152,7 +152,9 @@ def add_card(data: CardRequest):
 def get_cards(user_id: int):
     db = SessionLocal()
     try:
-        cards = db.query(Card).filter(Card.user_id == user_id).all()
+        cards = db.query(Card).filter(
+    Card.user_id == user_id
+).order_by(Card.id.asc()).all()
 
         return [
             {
