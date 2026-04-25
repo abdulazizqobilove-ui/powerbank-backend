@@ -180,26 +180,13 @@ def get_cards(user_id: int):
 def select_card(data: dict):
     db = SessionLocal()
     try:
-        user_id = data["user_id"]
-        card_id = data["card_id"]
-
-        # 🔥 получаем выбранную карту
-        selected = db.query(Card).filter(Card.id == card_id).first()
-
-        if not selected:
-            return {"status": "error"}
-
-        # 🔥 уменьшаем position у всех
         db.query(Card).filter(
-            Card.user_id == user_id
-        ).update({Card.position: Card.position + 1})
+            Card.user_id == data["user_id"]
+        ).update({"is_active": 0})
 
-        # 🔥 выбранную ставим первой
-        selected.position = 1
-
-        # 🔥 активность
-        db.query(Card).filter(Card.user_id == user_id).update({"is_active": 0})
-        selected.is_active = 1
+        db.query(Card).filter(
+            Card.id == data["card_id"]
+        ).update({"is_active": 1})
 
         db.commit()
 
