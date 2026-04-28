@@ -123,16 +123,23 @@ def get_stations():
 def add_card(data: CardRequest):
     db = SessionLocal()
     try:
-        # сбрасываем активную карту
+        # ❗ сбрасываем активность
         db.query(Card).filter(Card.user_id == data.user_id).update({"is_active": 0})
 
-        # создаём карту
+        # 🔥 НАХОДИМ ПОСЛЕДНЮЮ ПОЗИЦИЮ
+        last_card = db.query(Card).filter(
+            Card.user_id == data.user_id
+        ).order_by(Card.position.desc()).first()
+
+        next_position = last_card.position + 1 if last_card and last_card.position else 1
+
+        # 🔥 СОЗДАЁМ КАРТУ
         card = Card(
-            user_id=data.user_id,
-            brand="VISA",
-            last4=data.number[-4:],
-            is_active=1
-        )
+    user_id=data.user_id,
+    brand="VISA",
+    last4=data.number[-4:],
+    is_active=1
+)
 
         db.add(card)
         db.commit()
@@ -147,14 +154,11 @@ def add_card(data: CardRequest):
     finally:
         db.close()
 
-
 @app.get("/cards/{user_id}")
 def get_cards(user_id: int):
     db = SessionLocal()
     try:
-        cards = db.query(Card).filter(
-    Card.user_id == user_id
-).order_by(Card.id.asc()).all()
+        cards = db.query(Card).filter(Card.user_id == user_id).all()
 
         return [
             {
@@ -166,7 +170,6 @@ def get_cards(user_id: int):
         ]
     finally:
         db.close()
-
 
 @app.post("/cards/select")
 def select_card(data: dict):
@@ -180,7 +183,6 @@ def select_card(data: dict):
     finally:
         db.close()
 
-
 @app.delete("/cards/{card_id}")
 def delete_card(card_id: int):
     db = SessionLocal()
@@ -190,10 +192,10 @@ def delete_card(card_id: int):
         if not card:
             raise HTTPException(404, "Card not found")
 
-        # получаем все карты пользователя
-        user_cards = db.query(Card).filter(
-            Card.user_id == card.user_id
-        ).all()
+        # 💣 сколько карт у пользователя
+        cards = db.query(Card).filter(
+    Card.user_id == card.user_id
+).all()
 
         if len(user_cards) <= 1:
             raise HTTPException(400, "Нельзя удалить последнюю карту")
@@ -203,7 +205,7 @@ def delete_card(card_id: int):
         db.delete(card)
         db.commit()
 
-        # если удалили активную — делаем другую активной
+        # 🔥 если удалили активную → делаем другую активной
         if was_active:
             new_card = db.query(Card).filter(
                 Card.user_id == card.user_id
@@ -222,11 +224,12 @@ def delete_card(card_id: int):
 # 🔋 RENT
 # =========================
 
-@app.post("/rent")
-def rent_powerbank(data: RentRequest):
+@app.post("/rent/start")
+def rent_start(data: RentRequest):
     db = SessionLocal()
+
     try:
-        # ❌ 1. есть активная аренда
+        # ❌ есть активная аренда
         active = db.query(Rental).filter(
             Rental.user_id == data.user_id,
             Rental.status == "active"
@@ -235,16 +238,16 @@ def rent_powerbank(data: RentRequest):
         if active:
             raise HTTPException(400, "Already has active rental")
 
-        # 💣 2. ЕСТЬ ДОЛГ
+        # ❌ есть долг
         debt = db.query(Rental).filter(
             Rental.user_id == data.user_id,
-            Rental.payment_status == "waiting"
+            Rental.payment_status == "debt"
         ).first()
 
         if debt:
-            raise HTTPException(400, "Сначала оплатите предыдущую аренду")
+            raise HTTPException(400, "У вас есть долг")
 
-        # 💳 3. ПРОВЕРКА КАРТЫ (ВОТ ЭТО МЫ ДОБАВИЛИ)
+        # ❌ нет карты
         card = db.query(Card).filter(
             Card.user_id == data.user_id,
             Card.is_active == 1
@@ -253,40 +256,74 @@ def rent_powerbank(data: RentRequest):
         if not card:
             raise HTTPException(400, "Добавьте карту")
 
-        # ✅ 4. создаём аренду
+        # 💳 депозит
+        DEPOSIT = 50
+
+        payment = Payment(
+            rental_id=0,
+            amount=DEPOSIT,
+            status="hold"
+        )
+
+        db.add(payment)
+        db.commit()
+        db.refresh(payment)
+
+        # 🔋 аренда
         rental = Rental(
             user_id=data.user_id,
             station_id=data.station_id,
             status="active",
-            start_time=datetime.now()
+            start_time=datetime.utcnow(),
+            cost=0,
+            payment_status="hold"
         )
 
         db.add(rental)
         db.commit()
         db.refresh(rental)
 
-        return {"id": rental.id}
+        payment.rental_id = rental.id
+        db.commit()
+
+        return {
+            "rental_id": rental.id,
+            "deposit": DEPOSIT
+        }
 
     finally:
         db.close()
 
-@app.get("/rentals/{user_id}")
-def get_rentals(user_id: int):
+@app.post("/payment/debt")
+def pay_debt(data: PaymentRequest):
     db = SessionLocal()
-    try:
-        rentals = db.query(Rental).filter(Rental.user_id == user_id).all()
 
-        return [
-            {
-                "id": r.id,
-                "status": r.status,
-                "start_time": r.start_time.isoformat(),
-                "end_time": r.end_time.isoformat() if r.end_time else None,
-                "cost": r.cost,
-                "payment_status": r.payment_status
-            }
-            for r in rentals
-        ]
+    try:
+        rental = db.query(Rental).filter(
+            Rental.id == data.rental_id,
+            Rental.payment_status == "debt"
+        ).first()
+
+        if not rental:
+            raise HTTPException(404, "Debt not found")
+
+        # 🔥 находим долг
+        debt_payment = db.query(Payment).filter(
+            Payment.rental_id == rental.id,
+            Payment.status == "debt"
+        ).first()
+
+        if not debt_payment:
+            raise HTTPException(400, "No debt")
+
+        # 💳 списание (пока фейк)
+        debt_payment.status = "paid"
+        rental.payment_status = "paid"
+
+        db.commit()
+
+        return {"status": "paid"}
+
     finally:
         db.close()
 
@@ -294,9 +331,10 @@ def get_rentals(user_id: int):
 # 🔁 RETURN
 # =========================
 
-@app.post("/return")
-async def return_powerbank(data: ReturnRequest):
+@app.post("/rent/finish")
+def rent_finish(data: ReturnRequest):
     db = SessionLocal()
+
     try:
         rental = db.query(Rental).filter(
             Rental.id == data.rental_id,
@@ -306,18 +344,13 @@ async def return_powerbank(data: ReturnRequest):
         if not rental:
             raise HTTPException(404, "Not found")
 
-        if rental.status != "active":
-            raise HTTPException(400, "Уже завершено")
+        rental.end_time = datetime.utcnow()
 
-        if rental.payment_status == "paid":
-            raise HTTPException(400, "Уже оплачено")
-
-        rental.end_time = datetime.now()
-
+        # ⏱ время
         duration = rental.end_time - rental.start_time
         hours = duration.total_seconds() / 3600
 
-        # 💰 расчёт стоимости
+        # 💰 тариф
         if hours <= 1:
             cost = 7
         elif hours <= 24:
@@ -326,69 +359,94 @@ async def return_powerbank(data: ReturnRequest):
             extra_days = int((hours - 24) / 24) + 1
             cost = 14 + (extra_days * 14)
 
-        # 💣 ЛИМИТ
-        MAX_COST = 150
-
-        if cost >= MAX_COST:
-            cost = MAX_COST
-            rental.status = "lost"
-        else:
-            rental.status = "returned"
-
         rental.cost = cost
-        rental.payment_status = "waiting"
+        rental.status = "returned"
+
+        # 🔍 депозит
+        deposit_payment = db.query(Payment).filter(
+            Payment.rental_id == rental.id,
+            Payment.status == "hold"
+        ).first()
+
+        if not deposit_payment:
+            raise HTTPException(400, "Deposit not found")
+
+        if rental.payment_status == "paid":
+            raise HTTPException(400, "Already paid")
+
+        deposit = deposit_payment.amount
+
+        # =========================
+        # 💳 ЕСЛИ ХВАТАЕТ ДЕПОЗИТА
+        # =========================
+        if cost <= deposit:
+
+            charge_amount = cost
+            refund = deposit - cost
+
+            # списание
+            db.add(Payment(
+                rental_id=rental.id,
+                amount=charge_amount,
+                status="paid"
+            ))
+
+            # возврат
+            if refund > 0:
+                db.add(Payment(
+                    rental_id=rental.id,
+                    amount=refund,
+                    status="refund"
+                ))
+
+            rental.payment_status = "paid"
+
+        # =========================
+        # 💥 ЕСЛИ НЕ ХВАТАЕТ
+        # =========================
+        else:
+            charge_amount = deposit
+            extra_amount = cost - deposit
+
+            # списали депозит
+            db.add(Payment(
+                rental_id=rental.id,
+                amount=deposit,
+                status="paid"
+            ))
+
+            # ❗ пробуем досписать (пока фейк)
+            success = False
+
+            if success:
+                db.add(Payment(
+                    rental_id=rental.id,
+                    amount=extra_amount,
+                    status="paid"
+                ))
+                rental.payment_status = "paid"
+            else:
+                db.add(Payment(
+                    rental_id=rental.id,
+                    amount=extra_amount,
+                    status="debt"
+                ))
+                rental.payment_status = "debt"
+
+        # обновляем hold
+        if deposit_payment.status == "charged":
+    raise HTTPException(400, "Already charged")
 
         db.commit()
 
-        ws = connections.get(rental.user_id)
-        if ws:
-            await ws.send_json({
-                "type": "rental_finished",
-                "cost": cost
-            })
-
         return {
-            "type": "rental_finished",
             "cost": cost,
-            "rental_id": rental.id
+            "charged": charge_amount,
+            "status": rental.payment_status
         }
 
     finally:
         db.close()
-
-@app.post("/force-close")
-def force_close():
-    db = SessionLocal()
-
-    rentals = db.query(Rental).filter(
-        Rental.status == "active"
-    ).all()
-
-    for r in rentals:
-        duration = datetime.now() - r.start_time
-        hours = duration.total_seconds() / 3600
-
-        # 💰 считаем стоимость
-        if hours <= 1:
-            cost = 7
-        elif hours <= 24:
-            cost = 14
-        else:
-            extra_days = int((hours - 24) / 24) + 1
-            cost = 14 + (extra_days * 14)
-
-        MAX_COST = 150
-
-        # 💣 закрываем только если дошло до лимита
-        if cost >= MAX_COST:
-            r.status = "lost"
-            r.cost = MAX_COST
-            r.payment_status = "waiting"
-            r.end_time = datetime.now()
-
-    db.commit()
-    return {"status": "ok"}
-
 # =========================
 # 💰 PAYMENTS
 # =========================
@@ -404,92 +462,6 @@ import time
 ALIF_API = "https://alif.shop/api/payment/create"
 API_KEY = "ТВОЙ_API_KEY"
 CALLBACK_URL = "https://powerbank-backend.onrender.com/payment/webhook"  # 👈 поменяй!
-
-@app.post("/payment/create")
-def create_payment(data: PaymentRequest):
-    db = SessionLocal()
-
-    try:
-        rental = db.query(Rental).filter(Rental.id == data.rental_id).first()
-
-        if not rental:
-            raise HTTPException(404, "Rental not found")
-
-        if rental.payment_status == "paid":
-            raise HTTPException(400, "Already paid")
-
-        payment = Payment(
-            rental_id=rental.id,
-            amount=rental.cost,
-            status="pending"
-        )
-
-        db.add(payment)
-        db.commit()
-        db.refresh(payment)
-
-        # 🔥 АВТО ОПЛАТА ЧЕРЕЗ 3 СЕК
-        def fake_pay():
-            time.sleep(3)
-
-            db2 = SessionLocal()
-            try:
-                p = db2.query(Payment).filter(Payment.id == payment.id).first()
-                if p:
-                    p.status = "paid"
-
-                    r = db2.query(Rental).filter(Rental.id == p.rental_id).first()
-                    if r:
-                        r.payment_status = "paid"
-
-                db2.commit()
-            finally:
-                db2.close()
-
-        threading.Thread(target=fake_pay).start()
-
-        return {
-            "payment_url": f"https://google.com?q=pay_{payment.id}"
-        }
-
-    finally:
-        db.close()
-
-@app.get("/payment/status/{rental_id}")
-def payment_status(rental_id: int):
-    db = SessionLocal()
-    try:
-        rental = db.query(Rental).filter(Rental.id == rental_id).first()
-
-        if not rental:
-            raise HTTPException(404, "Not found")
-
-        return {
-            "status": rental.payment_status
-        }
-    finally:
-        db.close()
-
-@app.post("/payment/confirm")
-def confirm_payment(data: ConfirmPaymentRequest):
-    db = SessionLocal()
-    try:
-        payment = db.query(Payment).filter(Payment.id == data.payment_id).first()
-
-        if not payment:
-            raise HTTPException(404, "Payment not found")
-
-        payment.status = "paid"
-
-        rental = db.query(Rental).filter(Rental.id == payment.rental_id).first()
-        if rental:
-            rental.payment_status = "paid"
-
-        db.commit()
-
-        return {"status": "paid"}
-    finally:
-        db.close()
 
 # =========================
 # 🔌 WEBSOCKET
