@@ -435,7 +435,7 @@ def rent_finish(data: ReturnRequest):
 
         # обновляем hold
         if deposit_payment.status == "charged":
-    raise HTTPException(400, "Already charged")
+            raise HTTPException(400, "Already charged")
 
         db.commit()
 
