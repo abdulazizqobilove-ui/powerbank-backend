@@ -134,11 +134,18 @@ def add_card(data: CardRequest):
         next_position = last_card.position + 1 if last_card and last_card.position else 1
 
         # 🔥 СОЗДАЁМ КАРТУ
-        card = Card(
+        last_card = db.query(Card).filter(
+    Card.user_id == data.user_id
+).order_by(Card.position.desc()).first()
+
+next_position = last_card.position + 1 if last_card else 1
+
+card = Card(
     user_id=data.user_id,
     brand="VISA",
     last4=data.number[-4:],
-    is_active=1
+    is_active=1,
+    position=next_position
 )
 
         db.add(card)
@@ -158,7 +165,9 @@ def add_card(data: CardRequest):
 def get_cards(user_id: int):
     db = SessionLocal()
     try:
-        cards = db.query(Card).filter(Card.user_id == user_id).all()
+        cards = db.query(Card).filter(
+    Card.user_id == user_id
+).order_by(Card.position).all()
 
         return [
             {
@@ -193,9 +202,9 @@ def delete_card(card_id: int):
             raise HTTPException(404, "Card not found")
 
         # 💣 сколько карт у пользователя
-        cards = db.query(Card).filter(
-    Card.user_id == user_id
-).all()
+        user_cards = db.query(Card).filter(
+            Card.user_id == card.user_id
+        ).all()
 
         if len(user_cards) <= 1:
             raise HTTPException(400, "Нельзя удалить последнюю карту")
@@ -209,7 +218,7 @@ def delete_card(card_id: int):
         if was_active:
             new_card = db.query(Card).filter(
                 Card.user_id == card.user_id
-            ).first()
+            ).order_by(Card.position).first()
 
             if new_card:
                 new_card.is_active = 1
