@@ -228,6 +228,12 @@ def delete_card(card_id: int):
 def rent_powerbank(data: RentRequest):
     db = SessionLocal()
     try:
+        # 🔥 0. ПРОВЕРКА СТАНЦИИ (ДОБАВИЛИ)
+        station = next((s for s in stations if s["id"] == data.station_id), None)
+
+        if not station:
+            raise HTTPException(404, "Station not found")
+
         # ❌ 1. есть активная аренда
         active = db.query(Rental).filter(
             Rental.user_id == data.user_id,
@@ -246,7 +252,7 @@ def rent_powerbank(data: RentRequest):
         if debt:
             raise HTTPException(400, "Сначала оплатите предыдущую аренду")
 
-        # 💳 3. ПРОВЕРКА КАРТЫ (ВОТ ЭТО МЫ ДОБАВИЛИ)
+        # 💳 3. ПРОВЕРКА КАРТЫ
         card = db.query(Card).filter(
             Card.user_id == data.user_id,
             Card.is_active == 1
@@ -255,7 +261,11 @@ def rent_powerbank(data: RentRequest):
         if not card:
             raise HTTPException(400, "Добавьте карту")
 
-        # ✅ 4. создаём аренду
+        # ⚠️ 4. ПРОВЕРКА НАЛИЧИЯ ПАУЭРБАНКОВ (БОНУС, ЧТОБ НЕ ЛОМАЛОСЬ)
+        if station["powerbanks"] <= 0:
+            raise HTTPException(400, "Нет доступных powerbank")
+
+        # ✅ 5. создаём аренду
         rental = Rental(
             user_id=data.user_id,
             station_id=data.station_id,
