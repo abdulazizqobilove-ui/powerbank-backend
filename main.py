@@ -643,11 +643,16 @@ def check_token(token: str):
 
         user = db.query(User).filter(User.id == lt.user_id).first()
 
+        # 🔥 ФИКС: удаляем токен после использования
+        db.delete(lt)
+        db.commit()
+
         return {
             "status": "ok",
             "user_id": user.id,
             "name": user.name or ""
         }
+
     finally:
         db.close()
 
