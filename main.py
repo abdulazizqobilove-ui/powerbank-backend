@@ -920,12 +920,14 @@ class LoginToken(Base):
     token = Column(String, primary_key=True)
     user_id = Column(Integer, nullable=True)
 
+from sqlalchemy import text
+
 @app.get("/fix-cards")
 def fix_cards():
     db = SessionLocal()
     try:
-        db.execute("ALTER TABLE cards ADD COLUMN position INTEGER DEFAULT 1")
-        db.execute("UPDATE cards SET position = id WHERE position IS NULL")
+        db.execute(text("ALTER TABLE cards ADD COLUMN position INTEGER DEFAULT 1"))
+        db.execute(text("UPDATE cards SET position = id WHERE position IS NULL"))
         db.commit()
         return {"status": "ok"}
     except Exception as e:
