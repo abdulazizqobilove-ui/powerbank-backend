@@ -37,6 +37,7 @@ class Card(Base):
     brand = Column(String)
     last4 = Column(String)
     is_active = Column(Integer)
+    position = Column(Integer)
 
 class Rental(Base):
     __tablename__ = "rentals"
@@ -123,30 +124,26 @@ def get_stations():
 def add_card(data: CardRequest):
     db = SessionLocal()
     try:
-        # ❗ сбрасываем активность
-        db.query(Card).filter(Card.user_id == data.user_id).update({"is_active": 0})
+        db.query(Card).filter(
+            Card.user_id == data.user_id
+        ).update({"is_active": 0})
 
-        # 🔥 НАХОДИМ ПОСЛЕДНЮЮ ПОЗИЦИЮ
         last_card = db.query(Card).filter(
             Card.user_id == data.user_id
         ).order_by(Card.position.desc()).first()
 
-        next_position = last_card.position + 1 if last_card and last_card.position else 1
+        if last_card:
+            next_position = last_card.position + 1
+        else:
+            next_position = 1
 
-        # 🔥 СОЗДАЁМ КАРТУ
-        last_card = db.query(Card).filter(
-    Card.user_id == data.user_id
-).order_by(Card.position.desc()).first()
-
-next_position = last_card.position + 1 if last_card else 1
-
-card = Card(
-    user_id=data.user_id,
-    brand="VISA",
-    last4=data.number[-4:],
-    is_active=1,
-    position=next_position
-)
+        card = Card(
+            user_id=data.user_id,
+            brand="VISA",
+            last4=data.number[-4:],
+            is_active=1,
+            position=next_position
+        )
 
         db.add(card)
         db.commit()
@@ -158,25 +155,9 @@ card = Card(
             "last4": card.last4
         }
 
-    finally:
-        db.close()
+    except Exception as e:
+        return {"error": str(e)}
 
-@app.get("/cards/{user_id}")
-def get_cards(user_id: int):
-    db = SessionLocal()
-    try:
-        cards = db.query(Card).filter(
-    Card.user_id == user_id
-).order_by(Card.position).all()
-
-        return [
-            {
-                "id": c.id,
-                "brand": c.brand,
-                "last4": c.last4,
-                "is_active": c.is_active
-            } for c in cards
-        ]
     finally:
         db.close()
 
@@ -918,7 +899,18 @@ class LoginToken(Base):
     token = Column(String, primary_key=True)
     user_id = Column(Integer, nullable=True)
 
-Base.metadata.create_all(bind=engine)
+@app.get("/fix-cards")
+def fix_cards():
+    db = SessionLocal()
+    try:
+        db.execute("ALTER TABLE cards ADD COLUMN position INTEGER DEFAULT 1")
+        db.execute("UPDATE cards SET position = id WHERE position IS NULL")
+        db.commit()
+        return {"status": "ok"}
+    except Exception as e:
+        return {"error": str(e)}
+    finally:
+        db.close()
 
 @app.get("/stats/debts")
 def debts():
