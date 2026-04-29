@@ -126,7 +126,7 @@ def get_cards(user_id: int):
     try:
         cards = db.query(Card).filter(
             Card.user_id == user_id
-        ).order_by(Card.position).all()
+        ).order_by(Card.position, Card.id).all()
 
         return [
             {
