@@ -120,6 +120,27 @@ def get_stations():
 # 💳 CARDS
 # =========================
 
+@app.get("/cards/{user_id}")
+def get_cards(user_id: int):
+    db = SessionLocal()
+    try:
+        cards = db.query(Card).filter(
+            Card.user_id == user_id
+        ).order_by(Card.position).all()
+
+        return [
+            {
+                "id": c.id,
+                "brand": c.brand,
+                "last4": c.last4,
+                "is_active": c.is_active
+            }
+            for c in cards
+        ]
+
+    finally:
+        db.close()
+
 @app.post("/cards/add")
 def add_card(data: CardRequest):
     db = SessionLocal()
