@@ -476,6 +476,25 @@ async def return_powerbank(data: ReturnRequest):
     finally:
         db.close()
 
+@app.post("/station-return")
+async def station_return(station_id: int, slot_id: int):
+    db = SessionLocal()
+    try:
+        # 🔍 ищем активную аренду на этой станции
+        rental = db.query(Rental).filter(
+            Rental.station_id == station_id,
+            Rental.status == "active"
+        ).order_by(Rental.start_time.desc()).first()
+
+        if not rental:
+            return {"status": "no active rental"}
+
+        # 👉 вызываем ту же логику возврата
+        return await finish_rental(db, rental)
+
+    finally:
+        db.close()
+
 from datetime import datetime, timedelta
 
 @app.post("/force-close")
@@ -649,6 +668,26 @@ def confirm_payment(data: ConfirmPaymentRequest):
         db.commit()
 
         return {"status": "paid"}
+    finally:
+        db.close()
+
+@app.get("/debt/{user_id}")
+def get_debt(user_id: int):
+    db = SessionLocal()
+    try:
+        rental = db.query(Rental).filter(
+            Rental.user_id == user_id,
+            Rental.payment_status == "waiting"
+        ).order_by(Rental.id.desc()).first()
+
+        if not rental:
+            return {"debt": 0}
+
+        return {
+            "debt": rental.cost,
+            "status": rental.status
+        }
+
     finally:
         db.close()
 
