@@ -13,6 +13,18 @@ import os
 
 app = FastAPI()
 
+# =========================
+# 💳 PAYMENT HELPERS
+# =========================
+
+def try_charge(user_id: int, amount: float) -> bool:
+    """
+    Возвращает True/False.
+    Здесь позже будет интеграция с Alif/Click/Payme.
+    """
+    print(f"TRY CHARGE user={user_id} amount={amount}")
+    return False  # пока имитируем отказ (для теста долга)
+
 # 🔥 DATABASE
 DATABASE_URL = os.getenv("DATABASE_URL", "sqlite:///./test.db")
 print("DATABASE:", DATABASE_URL)
@@ -67,6 +79,20 @@ class User(Base):
     telegram_id = Column(String, unique=True)
     phone = Column(String, nullable=True)
     name = Column(String, nullable=True)
+
+class Rental(Base):
+    __tablename__ = "rentals"
+    id = Column(Integer, primary_key=True)
+    user_id = Column(Integer)
+    station_id = Column(Integer)
+    status = Column(String)
+    start_time = Column(DateTime)
+    end_time = Column(DateTime, nullable=True)
+    cost = Column(Float, default=0)
+    payment_status = Column(String, default="none")
+
+    # 👇 НОВОЕ
+    last_charge_attempt = Column(DateTime, nullable=True)
 
 # =========================
 # ⚙️ APP
@@ -186,11 +212,40 @@ def add_card(data: CardRequest):
 def select_card(data: dict):
     db = SessionLocal()
     try:
-        db.query(Card).filter(Card.user_id == data["user_id"]).update({"is_active": 0})
-        db.query(Card).filter(Card.id == data["card_id"]).update({"is_active": 1})
+        user_id = data["user_id"]
+        card_id = data["card_id"]
+
+        cards = db.query(Card).filter(
+            Card.user_id == user_id
+        ).order_by(Card.position).all()
+
+        # 🔥 находим выбранную
+        selected = None
+        for c in cards:
+            if c.id == card_id:
+                selected = c
+
+        if not selected:
+            return {"error": "card not found"}
+
+        # 🔥 убираем её из списка
+        cards.remove(selected)
+
+        # 🔥 вставляем на то же место (или можешь в начало)
+        insert_index = 0  # если хочешь вверх
+        # insert_index = cards.index(selected) — если хочешь оставить
+
+        cards.insert(insert_index, selected)
+
+        # 🔥 обновляем позиции
+        for i, c in enumerate(cards):
+            c.position = i + 1
+            c.is_active = 1 if c.id == card_id else 0
 
         db.commit()
+
         return {"status": "ok"}
+
     finally:
         db.close()
 
@@ -239,7 +294,7 @@ def delete_card(card_id: int):
 def rent_powerbank(data: RentRequest):
     db = SessionLocal()
     try:
-        # 🔥 0. ПРОВЕРКА СТАНЦИИ (ДОБАВИЛИ)
+        # 🔥 0. ПРОВЕРКА СТАНЦИИ
         station = next((s for s in stations if s["id"] == data.station_id), None)
 
         if not station:
@@ -254,7 +309,7 @@ def rent_powerbank(data: RentRequest):
         if active:
             raise HTTPException(400, "Already has active rental")
 
-        # 💣 2. ЕСТЬ ДОЛГ
+        # 💣 2. БЛОК ИЛИ ДОЛГ
         debt = db.query(Rental).filter(
             Rental.user_id == data.user_id,
             Rental.payment_status == "waiting"
@@ -262,6 +317,14 @@ def rent_powerbank(data: RentRequest):
 
         if debt:
             raise HTTPException(400, "Сначала оплатите предыдущую аренду")
+
+        blocked = db.query(Rental).filter(
+            Rental.user_id == data.user_id,
+            Rental.status == "blocked"
+        ).first()
+
+        if blocked:
+            raise HTTPException(400, "Вы заблокированы из-за долга")
 
         # 💳 3. ПРОВЕРКА КАРТЫ
         card = db.query(Card).filter(
@@ -272,11 +335,23 @@ def rent_powerbank(data: RentRequest):
         if not card:
             raise HTTPException(400, "Добавьте карту")
 
-        # ⚠️ 4. ПРОВЕРКА НАЛИЧИЯ ПАУЭРБАНКОВ (БОНУС, ЧТОБ НЕ ЛОМАЛОСЬ)
+        # ⚠️ 4. ПРОВЕРКА НАЛИЧИЯ
         if station["powerbanks"] <= 0:
             raise HTTPException(400, "Нет доступных powerbank")
 
-        # ✅ 5. создаём аренду
+        # =========================
+        # 💳 HOLD (14 сомони)
+        # =========================
+
+        # 🔥 пока фейк, но структура готова
+        hold_ok = True  # тут потом будет реальный запрос в платежку
+
+        if not hold_ok:
+            raise HTTPException(400, "Не удалось заблокировать средства")
+
+        # =========================
+        # 🔋 5. создаём аренду
+        # =========================
         rental = Rental(
             user_id=data.user_id,
             station_id=data.station_id,
@@ -287,6 +362,18 @@ def rent_powerbank(data: RentRequest):
         db.add(rental)
         db.commit()
         db.refresh(rental)
+
+        # =========================
+        # 💳 6. создаём HOLD запись
+        # =========================
+        payment = Payment(
+            rental_id=rental.id,
+            amount=14,
+            status="hold"
+        )
+
+        db.add(payment)
+        db.commit()
 
         return {"id": rental.id}
 
@@ -322,19 +409,23 @@ async def return_powerbank(data: ReturnRequest):
     db = SessionLocal()
     try:
         rental = db.query(Rental).filter(
-            Rental.id == data.rental_id,
-            Rental.status == "active"
+            Rental.id == data.rental_id
         ).first()
 
         if not rental:
             raise HTTPException(404, "Not found")
 
-        if rental.status != "active":
-            raise HTTPException(400, "Уже завершено")
+        # 🔥 защита от повторного возврата
+        if rental.end_time:
+            raise HTTPException(400, "Already returned")
 
         if rental.payment_status == "paid":
             raise HTTPException(400, "Уже оплачено")
 
+        if rental.status != "active":
+            raise HTTPException(400, "Уже завершено")
+
+        # ⏱ фиксируем время
         rental.end_time = datetime.utcnow()
 
         duration = rental.end_time - rental.start_time
@@ -349,9 +440,8 @@ async def return_powerbank(data: ReturnRequest):
             extra_days = int((hours - 24) / 24) + 1
             cost = 14 + (extra_days * 14)
 
-        # 💣 ЛИМИТ
+        # 💣 лимит
         MAX_COST = 150
-
         if cost >= MAX_COST:
             cost = MAX_COST
             rental.status = "lost"
@@ -359,10 +449,30 @@ async def return_powerbank(data: ReturnRequest):
             rental.status = "returned"
 
         rental.cost = cost
-        rental.payment_status = "waiting"
+
+        # =========================
+        # 💳 HOLD → ФИНАЛИЗАЦИЯ
+        # =========================
+        payment = db.query(Payment).filter(
+            Payment.rental_id == rental.id,
+            Payment.status == "hold"
+        ).first()
+
+        if payment:
+            if cost <= 7:
+                payment.amount = 7
+            else:
+                payment.amount = 14
+
+            payment.status = "paid"
+            rental.payment_status = "paid"
+        else:
+            # fallback если hold не найден
+            rental.payment_status = "waiting"
 
         db.commit()
 
+        # 🔌 websocket
         ws = connections.get(rental.user_id)
         if ws:
             await ws.send_json({
@@ -379,39 +489,80 @@ async def return_powerbank(data: ReturnRequest):
     finally:
         db.close()
 
+from datetime import datetime, timedelta
+
 @app.post("/force-close")
 def force_close():
     db = SessionLocal()
+    try:
+        rentals = db.query(Rental).filter(
+            Rental.status == "active"
+        ).all()
 
-    rentals = db.query(Rental).filter(
-        Rental.status == "active"
-    ).all()
+        now = datetime.utcnow()
 
-    for r in rentals:
-        duration = datetime.utcnow() - r.start_time
-        hours = duration.total_seconds() / 3600
+        for r in rentals:
+            # ⏱ сколько времени идёт аренда
+            duration = now - r.start_time
+            hours = duration.total_seconds() / 3600
 
-        # 💰 считаем стоимость
-        if hours <= 1:
-            cost = 7
-        elif hours <= 24:
-            cost = 14
-        else:
-            extra_days = int((hours - 24) / 24) + 1
-            cost = 14 + (extra_days * 14)
+            # 💰 базовая стоимость по времени
+            if hours <= 1:
+                cost = 7
+            elif hours <= 24:
+                cost = 14
+            else:
+                extra_days = int((hours - 24) / 24) + 1
+                cost = 14 + (extra_days * 14)
 
-        MAX_COST = 150
+            # =========================
+            # 💳 СПИСАНИЕ РАЗ В СУТКИ
+            # =========================
+            need_charge = False
 
-        # 💣 закрываем только если дошло до лимита
-        if cost >= MAX_COST:
-            r.status = "lost"
-            r.cost = MAX_COST
-            r.payment_status = "waiting"
-            r.end_time = datetime.utcnow()
+            if hours > 24:
+                if not r.last_charge_attempt:
+                    need_charge = True
+                else:
+                    if now - r.last_charge_attempt >= timedelta(hours=24):
+                        need_charge = True
 
-    db.commit()
-    return {"status": "ok"}
+            if need_charge:
+                success = try_charge(r.user_id, 14)
 
+                r.last_charge_attempt = now
+
+                if success:
+                    # если успешно — уменьшаем долг
+                    r.cost = max((r.cost or 0) - 14, 0)
+                    if r.cost == 0:
+                        r.payment_status = "paid"
+                else:
+                    # если не удалось — долг растёт
+                    r.payment_status = "waiting"
+
+            # =========================
+            # 💣 СТОП + ШТРАФ
+            # =========================
+            if cost >= 100:
+                r.cost = 150  # 100 + 50 штраф
+                r.status = "blocked"
+                r.payment_status = "waiting"
+                r.end_time = now
+                continue
+
+            # =========================
+            # 💰 ОБНОВЛЕНИЕ ДОЛГА
+            # =========================
+            if cost > (r.cost or 0):
+                r.cost = cost
+                r.payment_status = "waiting"
+
+        db.commit()
+        return {"status": "ok"}
+
+    finally:
+        db.close()
 # =========================
 # 💰 PAYMENTS
 # =========================
