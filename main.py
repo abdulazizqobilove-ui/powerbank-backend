@@ -51,19 +51,6 @@ class Card(Base):
     is_active = Column(Integer)
     position = Column(Integer)
 
-class Rental(Base):
-    __tablename__ = "rentals"
-    id = Column(Integer, primary_key=True)
-    user_id = Column(Integer)
-    station_id = Column(Integer)
-    status = Column(String)
-    start_time = Column(DateTime)
-    end_time = Column(DateTime, nullable=True)
-    cost = Column(Float, default=0)
-    payment_status = Column(String, default="none")
-
-from datetime import datetime
-
 class Payment(Base):
     __tablename__ = "payments"
     id = Column(Integer, primary_key=True)
