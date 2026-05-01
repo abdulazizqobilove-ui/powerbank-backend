@@ -1,46 +1,98 @@
-from fastapi import FastAPI, HTTPException, WebSocket, Request
+from fastapi import FastAPI, HTTPException, WebSocket, Request, Header
 from pydantic import BaseModel
 from datetime import datetime
-import uuid
-
-from sqlalchemy import create_engine, Column, Integer, String, DateTime, Float, text
-from sqlalchemy.orm import declarative_base, sessionmaker
-
-from sqladmin import Admin, ModelView
-from starlette.requests import Request
-
 import os
 
-app = FastAPI()
+from sqlalchemy import create_engine, Column, Integer, String, DateTime, Float
+from sqlalchemy.orm import declarative_base, sessionmaker
 
 # =========================
-# 💳 PAYMENT HELPERS
+# ⚙️ APP
+# =========================
+
+app = FastAPI()
+connections = {}
+STATION_SECRET = "super_secret_key_123"
+
+# =========================
+# 💳 HELPERS
 # =========================
 
 def try_charge(user_id: int, amount: float) -> bool:
-    """
-    Возвращает True/False.
-    Здесь позже будет интеграция с Alif/Click/Payme.
-    """
     print(f"TRY CHARGE user={user_id} amount={amount}")
-    return False  # пока имитируем отказ (для теста долга)
+    return False
 
+
+async def finish_rental(db, rental):
+    if rental.end_time:
+        return {"status": "already finished"}
+
+    rental.end_time = datetime.utcnow()
+
+    duration = rental.end_time - rental.start_time
+    hours = duration.total_seconds() / 3600
+
+    if hours <= 1:
+        cost = 7
+    elif hours <= 24:
+        cost = 14
+    else:
+        extra_days = int((hours - 24) / 24) + 1
+        cost = 14 + (extra_days * 14)
+
+    if cost >= 150:
+        cost = 150
+        rental.status = "lost"
+    else:
+        rental.status = "returned"
+
+    rental.cost = cost
+
+    payment = db.query(Payment).filter(
+        Payment.rental_id == rental.id,
+        Payment.status == "hold"
+    ).first()
+
+    if payment:
+        payment.amount = 7 if cost <= 7 else 14
+        payment.status = "paid"
+        rental.payment_status = "paid"
+    else:
+        rental.payment_status = "waiting"
+
+    db.commit()
+
+    ws = connections.get(rental.user_id)
+    if ws:
+        await ws.send_json({
+            "type": "rental_finished",
+            "cost": cost
+        })
+
+    return {"status": "ok", "cost": cost}
+
+
+# =========================
 # 🔥 DATABASE
-DATABASE_URL = os.getenv("DATABASE_URL", "sqlite:///./test.db")
-print("DATABASE:", DATABASE_URL)
+# =========================
 
-engine = create_engine(
-    DATABASE_URL,
-    pool_pre_ping=True
-)
+DATABASE_URL = os.getenv("DATABASE_URL", "sqlite:///./test.db")
+engine = create_engine(DATABASE_URL, pool_pre_ping=True)
 
 SessionLocal = sessionmaker(bind=engine)
 Base = declarative_base()
 
-# 🔥 ADMIN (после engine!)
-from sqladmin import Admin
+# =========================
+# 📦 DB MODELS
+# =========================
 
-admin = Admin(app=app, engine=engine, templates_dir="templates")
+class User(Base):
+    __tablename__ = "users"
+    id = Column(Integer, primary_key=True)
+    telegram_id = Column(String, unique=True)
+    phone = Column(String, nullable=True)
+    name = Column(String, nullable=True)
+
 
 class Card(Base):
     __tablename__ = "cards"
@@ -51,59 +103,73 @@ class Card(Base):
     is_active = Column(Integer)
     position = Column(Integer)
 
-class Payment(Base):
-    __tablename__ = "payments"
-    id = Column(Integer, primary_key=True)
-    rental_id = Column(Integer)
-    amount = Column(Float)
-    status = Column(String)
 
-    created_at = Column(DateTime, default=datetime.utcnow)  # 🔥 ВОТ ЭТО
-
-class User(Base):
-    __tablename__ = "users"
+class PowerBank(Base):
+    __tablename__ = "powerbanks"
     id = Column(Integer, primary_key=True)
-    telegram_id = Column(String, unique=True)
-    phone = Column(String, nullable=True)
-    name = Column(String, nullable=True)
+    station_id = Column(Integer)
+    slot_id = Column(Integer)
+    is_available = Column(Integer, default=1)
+
 
 class Rental(Base):
     __tablename__ = "rentals"
     id = Column(Integer, primary_key=True)
     user_id = Column(Integer)
     station_id = Column(Integer)
+    powerbank_id = Column(Integer, nullable=True)
+
     status = Column(String)
     start_time = Column(DateTime)
     end_time = Column(DateTime, nullable=True)
+
     cost = Column(Float, default=0)
     payment_status = Column(String, default="none")
-
-    # 👇 НОВОЕ
     last_charge_attempt = Column(DateTime, nullable=True)
 
+
+class Payment(Base):
+    __tablename__ = "payments"
+    id = Column(Integer, primary_key=True)
+    rental_id = Column(Integer)
+    amount = Column(Float)
+    status = Column(String)
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+
+class LoginToken(Base):
+    __tablename__ = "login_tokens"
+    token = Column(String, primary_key=True)
+    user_id = Column(Integer, nullable=True)
+
+
 # =========================
-# ⚙️ APP
+# 🛠 CREATE TABLES
 # =========================
 
-connections = {}
+Base.metadata.create_all(bind=engine)
 
 # =========================
-# 📦 MODELS
+# 📦 REQUEST MODELS
 # =========================
 
 class RentRequest(BaseModel):
     station_id: int
     user_id: int
 
+
 class ReturnRequest(BaseModel):
     rental_id: int
+
 
 class CardRequest(BaseModel):
     user_id: int
     number: str
 
+
 class PaymentRequest(BaseModel):
     rental_id: int
+
 
 class ConfirmPaymentRequest(BaseModel):
     payment_id: int
@@ -296,7 +362,7 @@ def rent_powerbank(data: RentRequest):
         if active:
             raise HTTPException(400, "Already has active rental")
 
-        # 💣 2. БЛОК ИЛИ ДОЛГ
+        # 💣 2. ДОЛГ
         debt = db.query(Rental).filter(
             Rental.user_id == data.user_id,
             Rental.payment_status == "waiting"
@@ -305,6 +371,7 @@ def rent_powerbank(data: RentRequest):
         if debt:
             raise HTTPException(400, "Сначала оплатите предыдущую аренду")
 
+        # 🚫 БЛОК
         blocked = db.query(Rental).filter(
             Rental.user_id == data.user_id,
             Rental.status == "blocked"
@@ -313,7 +380,7 @@ def rent_powerbank(data: RentRequest):
         if blocked:
             raise HTTPException(400, "Вы заблокированы из-за долга")
 
-        # 💳 3. ПРОВЕРКА КАРТЫ
+        # 💳 3. КАРТА
         card = db.query(Card).filter(
             Card.user_id == data.user_id,
             Card.is_active == 1
@@ -322,19 +389,25 @@ def rent_powerbank(data: RentRequest):
         if not card:
             raise HTTPException(400, "Добавьте карту")
 
-        # ⚠️ 4. ПРОВЕРКА НАЛИЧИЯ
-        if station["powerbanks"] <= 0:
+        # 🔋 4. ИЩЕМ СВОБОДНЫЙ POWERBANK
+        pb = db.query(PowerBank).filter(
+            PowerBank.station_id == data.station_id,
+            PowerBank.is_available == 1
+        ).first()
+
+        if not pb:
             raise HTTPException(400, "Нет доступных powerbank")
 
         # =========================
-        # 💳 HOLD (14 сомони)
+        # 💳 HOLD (14)
         # =========================
-
-        # 🔥 пока фейк, но структура готова
-        hold_ok = True  # тут потом будет реальный запрос в платежку
+        hold_ok = True
 
         if not hold_ok:
             raise HTTPException(400, "Не удалось заблокировать средства")
+
+        # 🔥 помечаем как выданный
+        pb.is_available = 0
 
         # =========================
         # 🔋 5. создаём аренду
@@ -342,6 +415,7 @@ def rent_powerbank(data: RentRequest):
         rental = Rental(
             user_id=data.user_id,
             station_id=data.station_id,
+            powerbank_id=pb.id,  # 🔥 ВАЖНО
             status="active",
             start_time=datetime.utcnow()
         )
@@ -351,7 +425,7 @@ def rent_powerbank(data: RentRequest):
         db.refresh(rental)
 
         # =========================
-        # 💳 6. создаём HOLD запись
+        # 💳 6. HOLD запись
         # =========================
         payment = Payment(
             rental_id=rental.id,
@@ -362,7 +436,11 @@ def rent_powerbank(data: RentRequest):
         db.add(payment)
         db.commit()
 
-        return {"id": rental.id}
+        return {
+            "id": rental.id,
+            "powerbank_id": pb.id,
+            "slot_id": pb.slot_id  # 🔥 можно сразу отдать фронту
+        }
 
     finally:
         db.close()
@@ -371,19 +449,38 @@ def rent_powerbank(data: RentRequest):
 def get_rentals(user_id: int):
     db = SessionLocal()
     try:
-        rentals = db.query(Rental).filter(Rental.user_id == user_id).all()
+        rentals = db.query(Rental).filter(
+            Rental.user_id == user_id
+        ).order_by(Rental.id.desc()).all()
 
-        return [
-            {
+        result = []
+
+        for r in rentals:
+            # 🔥 найдём слот через powerbank
+            slot_id = None
+
+            if r.powerbank_id:
+                pb = db.query(PowerBank).filter(
+                    PowerBank.id == r.powerbank_id
+                ).first()
+
+                if pb:
+                    slot_id = pb.slot_id
+
+            result.append({
                 "id": r.id,
                 "status": r.status,
+                "station_id": r.station_id,
+                "powerbank_id": r.powerbank_id,
+                "slot_id": slot_id,  # 🔥 новое
                 "start_time": r.start_time.isoformat(),
                 "end_time": r.end_time.isoformat() if r.end_time else None,
                 "cost": r.cost,
                 "payment_status": r.payment_status
-            }
-            for r in rentals
-        ]
+            })
+
+        return result
+
     finally:
         db.close()
 
@@ -402,94 +499,42 @@ async def return_powerbank(data: ReturnRequest):
         if not rental:
             raise HTTPException(404, "Not found")
 
-        # 🔥 защита от повторного возврата
-        if rental.end_time:
-            raise HTTPException(400, "Already returned")
-
-        if rental.payment_status == "paid":
-            raise HTTPException(400, "Уже оплачено")
-
-        if rental.status != "active":
-            raise HTTPException(400, "Уже завершено")
-
-        # ⏱ фиксируем время
-        rental.end_time = datetime.utcnow()
-
-        duration = rental.end_time - rental.start_time
-        hours = duration.total_seconds() / 3600
-
-        # 💰 расчёт стоимости
-        if hours <= 1:
-            cost = 7
-        elif hours <= 24:
-            cost = 14
-        else:
-            extra_days = int((hours - 24) / 24) + 1
-            cost = 14 + (extra_days * 14)
-
-        # 💣 лимит
-        MAX_COST = 150
-        if cost >= MAX_COST:
-            cost = MAX_COST
-            rental.status = "lost"
-        else:
-            rental.status = "returned"
-
-        rental.cost = cost
-
-        # =========================
-        # 💳 HOLD → ФИНАЛИЗАЦИЯ
-        # =========================
-        payment = db.query(Payment).filter(
-            Payment.rental_id == rental.id,
-            Payment.status == "hold"
-        ).first()
-
-        if payment:
-            if cost <= 7:
-                payment.amount = 7
-            else:
-                payment.amount = 14
-
-            payment.status = "paid"
-            rental.payment_status = "paid"
-        else:
-            # fallback если hold не найден
-            rental.payment_status = "waiting"
-
-        db.commit()
-
-        # 🔌 websocket
-        ws = connections.get(rental.user_id)
-        if ws:
-            await ws.send_json({
-                "type": "rental_finished",
-                "cost": cost
-            })
-
-        return {
-            "type": "rental_finished",
-            "cost": cost,
-            "rental_id": rental.id
-        }
+        return await finish_rental(db, rental)
 
     finally:
         db.close()
 
+from fastapi import Header
+
 @app.post("/station-return")
-async def station_return(station_id: int, slot_id: int):
+async def station_return(
+    station_id: int,
+    slot_id: int,
+    x_api_key: str = Header(None)
+):
+    if x_api_key != STATION_SECRET:
+        raise HTTPException(403, "Forbidden")
+
     db = SessionLocal()
     try:
-        # 🔍 ищем активную аренду на этой станции
+        pb = db.query(PowerBank).filter(
+            PowerBank.station_id == station_id,
+            PowerBank.slot_id == slot_id
+        ).first()
+
+        if not pb:
+            return {"status": "powerbank not found"}
+
         rental = db.query(Rental).filter(
-            Rental.station_id == station_id,
+            Rental.powerbank_id == pb.id,
             Rental.status == "active"
-        ).order_by(Rental.start_time.desc()).first()
+        ).first()
 
         if not rental:
             return {"status": "no active rental"}
 
-        # 👉 вызываем ту же логику возврата
+        pb.is_available = 1
+
         return await finish_rental(db, rental)
 
     finally:
@@ -1091,11 +1136,6 @@ def dashboard():
         "users": debt_users
     }
 }
-
-class LoginToken(Base):
-    __tablename__ = "login_tokens"
-    token = Column(String, primary_key=True)
-    user_id = Column(Integer, nullable=True)
 
 from sqlalchemy import text
 
