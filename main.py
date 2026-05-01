@@ -5,6 +5,7 @@ import os
 
 from sqlalchemy import create_engine, Column, Integer, String, DateTime, Float
 from sqlalchemy.orm import declarative_base, sessionmaker
+from sqladmin import Admin, ModelView
 
 # =========================
 # ⚙️ APP
@@ -148,6 +149,7 @@ class LoginToken(Base):
 # =========================
 
 Base.metadata.create_all(bind=engine)
+admin = Admin(app=app, engine=engine)
 
 # =========================
 # 📦 REQUEST MODELS
