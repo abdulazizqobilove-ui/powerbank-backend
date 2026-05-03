@@ -453,42 +453,7 @@ def rent_powerbank(data: RentRequest):
 
 @app.get("/rentals/{user_id}")
 def get_rentals(user_id: int):
-    db = SessionLocal()
-    try:
-        rentals = db.query(Rental).filter(
-            Rental.user_id == user_id
-        ).order_by(Rental.id.desc()).all()
-
-        result = []
-
-        for r in rentals:
-            slot_id = None
-
-            if r.powerbank_id:
-                pb = db.query(PowerBank).filter(
-                    PowerBank.id == r.powerbank_id
-                ).first()
-
-                if pb:
-                    slot_id = pb.slot_id
-
-            # ✅ ВНУТРИ ЦИКЛА
-            result.append({
-                "id": r.id,
-                "status": r.status or "unknown",
-                "station_id": r.station_id,
-                "powerbank_id": r.powerbank_id,
-                "slot_id": slot_id,
-                "start_time": str(r.start_time) if r.start_time else None,
-                "end_time": str(r.end_time) if r.end_time else None,
-                "cost": float(r.cost or 0),
-                "payment_status": r.payment_status or "none"
-            })
-
-        return result
-
-    finally:
-        db.close()
+    return {"ok": True}
 
 from sqlalchemy import text
 
