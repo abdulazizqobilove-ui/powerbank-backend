@@ -462,7 +462,6 @@ def get_rentals(user_id: int):
         result = []
 
         for r in rentals:
-            # 🔥 найдём слот через powerbank
             slot_id = None
 
             if r.powerbank_id:
@@ -473,17 +472,18 @@ def get_rentals(user_id: int):
                 if pb:
                     slot_id = pb.slot_id
 
+            # ✅ ВНУТРИ ЦИКЛА
             result.append({
-    "id": r.id,
-    "status": r.status,
-    "station_id": r.station_id,
-    "powerbank_id": r.powerbank_id,
-    "slot_id": slot_id,
-    "start_time": r.start_time.isoformat() if r.start_time else None,
-    "end_time": r.end_time.isoformat() if r.end_time else None,
-    "cost": r.cost,
-    "payment_status": r.payment_status
-})
+                "id": r.id,
+                "status": r.status or "unknown",
+                "station_id": r.station_id,
+                "powerbank_id": r.powerbank_id,
+                "slot_id": slot_id,
+                "start_time": str(r.start_time) if r.start_time else None,
+                "end_time": str(r.end_time) if r.end_time else None,
+                "cost": float(r.cost or 0),
+                "payment_status": r.payment_status or "none"
+            })
 
         return result
 
