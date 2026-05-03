@@ -814,7 +814,9 @@ async def payment_webhook(request: Request):
 def create_token():
     db = SessionLocal()
     try:
-        token = str(uuid.uuid4())
+        import uuid
+
+        token = str(uuid.uuid4())  # ✅ ВОТ ЭТО ТЫ ЗАБЫЛ
 
         db.add(LoginToken(token=token))
         db.commit()
@@ -948,30 +950,6 @@ def get_stats():
         "month_income": month,
         "unpaid_rentals": unpaid
     }
-
-from sqlalchemy import text
-
-@app.get("/fix-db")
-def fix_db():
-    db = SessionLocal()
-
-    db.execute(text("""
-        DO $$
-        BEGIN
-            IF NOT EXISTS (
-                SELECT 1 FROM information_schema.columns 
-                WHERE table_name='payments' AND column_name='created_at'
-            ) THEN
-                ALTER TABLE payments ADD COLUMN created_at TIMESTAMP;
-            END IF;
-        END $$;
-    """))
-
-    db.execute(text("UPDATE payments SET created_at = NOW() WHERE created_at IS NULL"))
-
-    db.commit()
-
-    return {"status": "fixed"}
 
 @app.get("/stats/daily")
 def stats_daily():
