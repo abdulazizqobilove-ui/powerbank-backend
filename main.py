@@ -131,10 +131,14 @@ class Rental(Base):
 
 class Payment(Base):
     __tablename__ = "payments"
+
     id = Column(Integer, primary_key=True)
     rental_id = Column(Integer)
     amount = Column(Float)
     status = Column(String)
+
+    external_id = Column(String, nullable=True)  # 👈 ВОТ СЮДА
+
     created_at = Column(DateTime, default=datetime.utcnow)
 
 
@@ -616,6 +620,20 @@ def force_close():
 
     finally:
         db.close()
+
+from sqlalchemy import text
+
+@app.get("/fix-payment")
+def fix_payment():
+    db = SessionLocal()
+
+    db.execute(text("""
+        ALTER TABLE payments
+        ADD COLUMN IF NOT EXISTS external_id TEXT;
+    """))
+
+    db.commit()
+    return {"status": "ok"}
 # =========================
 # 💰 PAYMENTS
 # =========================
@@ -655,27 +673,7 @@ def create_payment(data: PaymentRequest):
         db.commit()
         db.refresh(payment)
 
-        # 🔥 АВТО ОПЛАТА ЧЕРЕЗ 3 СЕК
-        def fake_pay():
-            time.sleep(3)
-
-            db2 = SessionLocal()
-            try:
-                p = db2.query(Payment).filter(Payment.id == payment.id).first()
-                if p:
-                    p.status = "paid"
-
-                    r = db2.query(Rental).filter(Rental.id == p.rental_id).first()
-                    if r:
-                        r.payment_status = "paid"
-
-                db2.commit()
-            finally:
-                db2.close()
-
-        threading.Thread(target=fake_pay).start()
-
-        return {
+         return {
             "payment_url": f"https://google.com?q=pay_{payment.id}"
         }
 
