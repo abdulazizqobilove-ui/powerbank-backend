@@ -641,21 +641,16 @@ import requests
 
 ALIF_API = "https://alif.shop/api/payment/create"
 API_KEY = "ТВОЙ_API_KEY"
-
-import requests
-import threading
-import time
-
-ALIF_API = "https://alif.shop/api/payment/create"
-API_KEY = "ТВОЙ_API_KEY"
-CALLBACK_URL = "https://powerbank-backend.onrender.com/payment/webhook"  # 👈 поменяй!
+CALLBACK_URL = "https://powerbank-backend.onrender.com/payment/webhook"
 
 @app.post("/payment/create")
 def create_payment(data: PaymentRequest):
     db = SessionLocal()
 
     try:
-        rental = db.query(Rental).filter(Rental.id == data.rental_id).first()
+        rental = db.query(Rental).filter(
+            Rental.id == data.rental_id
+        ).first()
 
         if not rental:
             raise HTTPException(404, "Rental not found")
@@ -673,7 +668,7 @@ def create_payment(data: PaymentRequest):
         db.commit()
         db.refresh(payment)
 
-         return {
+        return {
             "payment_url": f"https://google.com?q=pay_{payment.id}"
         }
 
