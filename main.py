@@ -474,16 +474,16 @@ def get_rentals(user_id: int):
                     slot_id = pb.slot_id
 
             result.append({
-                "id": r.id,
-                "status": r.status,
-                "station_id": r.station_id,
-                "powerbank_id": r.powerbank_id,
-                "slot_id": slot_id,  # 🔥 новое
-                "start_time": r.start_time.isoformat(),
-                "end_time": r.end_time.isoformat() if r.end_time else None,
-                "cost": r.cost,
-                "payment_status": r.payment_status
-            })
+    "id": r.id,
+    "status": r.status,
+    "station_id": r.station_id,
+    "powerbank_id": r.powerbank_id,
+    "slot_id": slot_id,
+    "start_time": r.start_time.isoformat() if r.start_time else None,
+    "end_time": r.end_time.isoformat() if r.end_time else None,
+    "cost": r.cost,
+    "payment_status": r.payment_status
+})
 
         return result
 
