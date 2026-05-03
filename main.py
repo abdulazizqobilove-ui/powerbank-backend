@@ -453,8 +453,30 @@ def rent_powerbank(data: RentRequest):
 
 @app.get("/rentals/{user_id}")
 def get_rentals(user_id: int):
-    return {"ok": True}
+    db = SessionLocal()
+    try:
+        rentals = db.query(Rental).filter(
+            Rental.user_id == user_id
+        ).order_by(Rental.id.desc()).all()
 
+        return [
+            {
+                "id": r.id,
+                "status": r.status or "unknown",
+                "station_id": r.station_id,
+                "powerbank_id": r.powerbank_id,
+                "slot_id": None,
+                "start_time": str(r.start_time) if r.start_time else None,
+                "end_time": str(r.end_time) if r.end_time else None,
+                "cost": float(r.cost or 0),
+                "payment_status": r.payment_status or "none"
+            }
+            for r in rentals
+        ]
+
+    finally:
+        db.close()
+        
 from sqlalchemy import text
 
 @app.get("/fix-db")
