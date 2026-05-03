@@ -490,6 +490,20 @@ def get_rentals(user_id: int):
     finally:
         db.close()
 
+from sqlalchemy import text
+
+@app.get("/fix-db")
+def fix_db():
+    db = SessionLocal()
+
+    db.execute(text("""
+        ALTER TABLE rentals
+        ADD COLUMN IF NOT EXISTS powerbank_id INTEGER;
+    """))
+
+    db.commit()
+    return {"status": "ok"}
+
 # =========================
 # 🔁 RETURN
 # =========================
