@@ -457,22 +457,29 @@ def get_rentals(user_id: int):
     try:
         rentals = db.query(Rental).filter(
             Rental.user_id == user_id
-        ).order_by(Rental.id.desc()).all()
+        ).all()
 
-        return [
-            {
-                "id": r.id,
-                "status": r.status or "unknown",
-                "station_id": r.station_id,
-                "powerbank_id": r.powerbank_id,
-                "slot_id": None,
-                "start_time": str(r.start_time) if r.start_time else None,
-                "end_time": str(r.end_time) if r.end_time else None,
-                "cost": float(r.cost or 0),
-                "payment_status": r.payment_status or "none"
-            }
-            for r in rentals
-        ]
+        result = []
+
+        for r in rentals:
+            try:
+                result.append({
+                    "id": r.id,
+                    "status": r.status,
+                    "station_id": r.station_id,
+                    "powerbank_id": r.powerbank_id,
+                    "start_time": str(r.start_time),
+                    "end_time": str(r.end_time),
+                    "cost": float(r.cost or 0),
+                    "payment_status": r.payment_status
+                })
+            except Exception as e:
+                return {"ROW_ERROR": str(e), "row_id": r.id}
+
+        return result
+
+    except Exception as e:
+        return {"ERROR": str(e)}
 
     finally:
         db.close()
