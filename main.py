@@ -483,7 +483,7 @@ def get_rentals(user_id: int):
 
     finally:
         db.close()
-        
+
 from sqlalchemy import text
 
 @app.get("/fix-db")
@@ -497,6 +497,21 @@ def fix_db():
 
     db.commit()
     return {"status": "ok"}
+
+from sqlalchemy import text
+
+@app.get("/fix-rentals")
+def fix_rentals():
+    db = SessionLocal()
+    try:
+        db.execute(text("""
+            ALTER TABLE rentals
+            ADD COLUMN IF NOT EXISTS last_charge_attempt TIMESTAMP;
+        """))
+        db.commit()
+        return {"status": "ok"}
+    finally:
+        db.close()
 
 # =========================
 # 🔁 RETURN
