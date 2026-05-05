@@ -500,6 +500,21 @@ def fix_db():
 
 from sqlalchemy import text
 
+@app.get("/add-powerbank")
+def add_powerbank():
+    db = SessionLocal()
+    try:
+        pb = PowerBank(
+            station_id=1,
+            slot_id=1,
+            is_available=1
+        )
+        db.add(pb)
+        db.commit()
+        return {"status": "added"}
+    finally:
+        db.close()
+
 @app.get("/fix-rentals")
 def fix_rentals():
     db = SessionLocal()
