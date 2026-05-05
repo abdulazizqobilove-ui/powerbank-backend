@@ -68,6 +68,29 @@ class User(Base):
     phone = Column(String, nullable=True)
     name = Column(String, nullable=True)
 
+class Station(Base):
+    __tablename__ = "stations"
+
+    id = Column(Integer, primary_key=True)
+    name = Column(String)
+    address = Column(String)
+
+    lat = Column(Float)
+    lng = Column(Float)
+
+    status = Column(String, default="offline")  # online / offline
+    last_ping = Column(DateTime, nullable=True)
+
+
+class Slot(Base):
+    __tablename__ = "slots"
+
+    id = Column(Integer, primary_key=True)
+    station_id = Column(Integer)
+
+    number = Column(Integer)  # номер слота (1,2,3...)
+    status = Column(String)   # full / empty / reserved
+
 # =========================
 # ⚙️ APP
 # =========================
@@ -99,18 +122,35 @@ class ConfirmPaymentRequest(BaseModel):
 # 📍 STATIONS
 # =========================
 
-stations = [
-    {
-        "id": 1,
-        "name": "Street Game Club",
-        "powerbanks": 5,
-        "charged": 5,
-        "empty_slots": 2,
-        "address": "ул. Табиби",
-        "lat": 41.3111,
-        "lng": 69.2797
-    }
-]
+@app.get("/stations")
+def get_stations():
+    db = SessionLocal()
+
+    update_station_status(db)
+
+    stations = db.query(Station).all()
+
+    result = []
+
+    for s in stations:
+        slots = db.query(Slot).filter(Slot.station_id == s.id).all()
+
+        powerbanks = sum(1 for slot in slots if slot.status == "full")
+        empty = sum(1 for slot in slots if slot.status == "empty")
+
+        result.append({
+            "id": s.id,
+            "name": s.name,
+            "address": s.address,
+            "lat": s.lat,
+            "lng": s.lng,
+            "powerbanks": powerbanks,
+            "empty_slots": empty,
+            "status": s.status
+        })
+
+    db.close()
+    return result
 
 @app.get("/stations")
 def get_stations():
@@ -140,6 +180,34 @@ def get_cards(user_id: int):
 
     finally:
         db.close()
+
+@app.post("/debug/take")
+def debug_take(data: dict):
+    db = SessionLocal()
+
+    slot = db.query(Slot).filter(Slot.id == data["slot_id"]).first()
+
+    if not slot:
+        raise HTTPException(404, "Slot not found")
+
+    slot.status = "empty"
+    db.commit()
+
+    return {"status": "taken"}
+
+@app.post("/debug/return")
+def debug_return(data: dict):
+    db = SessionLocal()
+
+    slot = db.query(Slot).filter(Slot.id == data["slot_id"]).first()
+
+    if not slot:
+        raise HTTPException(404, "Slot not found")
+
+    slot.status = "full"
+    db.commit()
+
+    return {"status": "returned"}
 
 @app.post("/cards/add")
 def add_card(data: CardRequest):
@@ -252,13 +320,18 @@ def delete_card(card_id: int):
 def rent_powerbank(data: RentRequest):
     db = SessionLocal()
     try:
-        # 🔥 0. ПРОВЕРКА СТАНЦИИ (ДОБАВИЛИ)
-        station = next((s for s in stations if s["id"] == data.station_id), None)
+        # 🔥 0. СТАНЦИЯ ИЗ БД
+        station = db.query(Station).filter(
+            Station.id == data.station_id
+        ).first()
 
         if not station:
             raise HTTPException(404, "Station not found")
 
-        # ❌ 1. есть активная аренда
+        if station.status != "online":
+            raise HTTPException(400, "Станция оффлайн")
+
+        # ❌ 1. АКТИВНАЯ АРЕНДА
         active = db.query(Rental).filter(
             Rental.user_id == data.user_id,
             Rental.status == "active"
@@ -267,16 +340,16 @@ def rent_powerbank(data: RentRequest):
         if active:
             raise HTTPException(400, "Already has active rental")
 
-        # 💣 2. ЕСТЬ ДОЛГ
+        # 💣 2. ДОЛГ
         debt = db.query(Rental).filter(
             Rental.user_id == data.user_id,
             Rental.payment_status == "waiting"
         ).first()
 
         if debt:
-            raise HTTPException(400, "Сначала оплатите предыдущую аренду")
+            raise HTTPException(400, "Сначала оплатите долг")
 
-        # 💳 3. ПРОВЕРКА КАРТЫ
+        # 💳 3. КАРТА
         card = db.query(Card).filter(
             Card.user_id == data.user_id,
             Card.is_active == 1
@@ -285,15 +358,24 @@ def rent_powerbank(data: RentRequest):
         if not card:
             raise HTTPException(400, "Добавьте карту")
 
-        # ⚠️ 4. ПРОВЕРКА НАЛИЧИЯ ПАУЭРБАНКОВ (БОНУС, ЧТОБ НЕ ЛОМАЛОСЬ)
-        if station["powerbanks"] <= 0:
+        # 🔋 4. БЕРЁМ СЛОТ
+        slot = db.query(Slot).filter(
+            Slot.station_id == data.station_id,
+            Slot.status == "full"
+        ).first()
+
+        if not slot:
             raise HTTPException(400, "Нет доступных powerbank")
 
-        # ✅ 5. создаём аренду
+        # 🔥 5. РЕЗЕРВИРУЕМ СЛОТ
+        slot.status = "reserved"
+        db.commit()
+
+        # ✅ 6. СОЗДАЁМ АРЕНДУ
         rental = Rental(
             user_id=data.user_id,
             station_id=data.station_id,
-            status="active",
+            status="pending",
             start_time=datetime.utcnow()
         )
 
@@ -301,7 +383,11 @@ def rent_powerbank(data: RentRequest):
         db.commit()
         db.refresh(rental)
 
-        return {"id": rental.id}
+        # 🔓 7. ГОВОРИМ СТАНЦИИ ЧТО ОТКРЫТЬ
+        return {
+            "rental_id": rental.id,
+            "slot_number": slot.number   # 👈 ВОТ ЭТО ГЛАВНОЕ
+        }
 
     finally:
         db.close()
@@ -323,6 +409,107 @@ def get_rentals(user_id: int):
             }
             for r in rentals
         ]
+    finally:
+        db.close()
+
+@app.post("/station/return")
+def station_return(data: dict):
+    db = SessionLocal()
+
+    slot_id = data["slot_id"]
+
+    slot = db.query(Slot).filter(Slot.id == slot_id).first()
+
+    if not slot:
+        raise HTTPException(404, "Slot not found")
+
+    slot.status = "full"
+
+    db.commit()
+
+    return {"status": "ok"}
+
+@app.post("/station/unlock")
+def station_unlock(data: dict):
+    db = SessionLocal()
+
+    station_id = data["station_id"]
+
+    slot = db.query(Slot).filter(
+        Slot.station_id == station_id,
+        Slot.status == "reserved"
+    ).first()
+
+    if not slot:
+        raise HTTPException(400, "Нет слота")
+
+    return {
+        "slot_number": slot.number
+    }
+
+@app.post("/station/ping")
+def station_ping(data: dict):
+    db = SessionLocal()
+
+    station = db.query(Station).filter(
+        Station.id == data["station_id"]
+    ).first()
+
+    if not station:
+        raise HTTPException(404, "Station not found")
+
+    station.status = "online"
+    station.last_ping = datetime.utcnow()
+
+    db.commit()
+
+    return {"status": "ok"}
+
+@app.post("/station/confirm-take")
+def confirm_take(data: dict):
+    db = SessionLocal()
+
+    rental = db.query(Rental).filter(
+        Rental.id == data["rental_id"]
+    ).first()
+
+    if not rental:
+        raise HTTPException(404, "Rental not found")
+
+    rental.status = "active"
+    db.commit()
+
+    return {"status": "ok"}
+
+@app.post("/station/ping")
+def ping(data: dict):
+    db = SessionLocal()
+
+    station = db.query(Station).filter(
+        Station.id == data["station_id"]
+    ).first()
+
+    if station:
+        station.last_ping = datetime.utcnow()
+        station.status = "online"
+        db.commit()
+
+    return {"ok": True}
+
+@app.post("/debug/return")
+def debug_return(data: dict):
+    db = SessionLocal()
+    try:
+        slot = db.query(Slot).filter(Slot.id == data["slot_id"]).first()
+
+        if not slot:
+            raise HTTPException(404, "Slot not found")
+
+        slot.status = "full"
+
+        db.commit()
+
+        return {"status": "returned"}
     finally:
         db.close()
 
@@ -974,6 +1161,23 @@ def debts():
         "debtors_count": len(users),
         "users": users
     }
+
+from datetime import timedelta
+
+def update_station_status(db):
+    stations = db.query(Station).all()
+
+    for s in stations:
+        if not s.last_ping:
+            s.status = "offline"
+            continue
+
+        if datetime.utcnow() - s.last_ping > timedelta(seconds=30):
+            s.status = "offline"
+        else:
+            s.status = "online"
+
+    db.commit()
 
 from fastapi.responses import HTMLResponse
 
