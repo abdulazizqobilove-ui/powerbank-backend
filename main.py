@@ -191,29 +191,13 @@ def select_card(data: dict):
 
         cards = db.query(Card).filter(
             Card.user_id == user_id
-        ).order_by(Card.position).all()
+        ).all()
 
-        # 🔥 находим выбранную
-        selected = None
-        for c in cards:
-            if c.id == card_id:
-                selected = c
-
-        if not selected:
+        if not any(c.id == card_id for c in cards):
             return {"error": "card not found"}
 
-        # 🔥 убираем её из списка
-        cards.remove(selected)
-
-        # 🔥 вставляем на то же место (или можешь в начало)
-        insert_index = 0  # если хочешь вверх
-        # insert_index = cards.index(selected) — если хочешь оставить
-
-        cards.insert(insert_index, selected)
-
-        # 🔥 обновляем позиции
-        for i, c in enumerate(cards):
-            c.position = i + 1
+        # 🔥 просто делаем активной, НЕ трогаем position
+        for c in cards:
             c.is_active = 1 if c.id == card_id else 0
 
         db.commit()
