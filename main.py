@@ -515,6 +515,23 @@ def add_powerbank():
     finally:
         db.close()
 
+@app.get("/force-close-all")
+def force_close_all():
+    db = SessionLocal()
+    try:
+        rentals = db.query(Rental).filter(
+            Rental.status == "active"
+        ).all()
+
+        for r in rentals:
+            r.status = "returned"
+            r.end_time = datetime.utcnow()
+
+        db.commit()
+        return {"closed": len(rentals)}
+    finally:
+        db.close()
+
 @app.get("/fix-rentals")
 def fix_rentals():
     db = SessionLocal()
