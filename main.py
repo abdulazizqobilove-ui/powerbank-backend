@@ -25,6 +25,8 @@ engine = create_engine(
 SessionLocal = sessionmaker(bind=engine)
 Base = declarative_base()
 
+Base.metadata.create_all(bind=engine)
+
 # 🔥 ADMIN (после engine!)
 from sqladmin import Admin
 
