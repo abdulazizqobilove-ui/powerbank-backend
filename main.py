@@ -25,8 +25,6 @@ engine = create_engine(
 SessionLocal = sessionmaker(bind=engine)
 Base = declarative_base()
 
-Base.metadata.create_all(bind=engine)
-
 # 🔥 ADMIN (после engine!)
 from sqladmin import Admin
 
@@ -153,11 +151,6 @@ def get_stations():
 
     db.close()
     return result
-
-@app.get("/stations")
-def get_stations():
-    return stations
-
 # =========================
 # 💳 CARDS
 # =========================
@@ -514,6 +507,35 @@ def debug_return(data: dict):
         return {"status": "returned"}
     finally:
         db.close()
+
+@app.get("/debug/init")
+def init():
+    db = SessionLocal()
+
+    # создаём станцию
+    station = Station(
+        name="Test Station",
+        address="Test",
+        lat=41.3,
+        lng=69.2,
+        status="online"
+    )
+    db.add(station)
+    db.commit()
+    db.refresh(station)
+
+    # создаём слоты
+    for i in range(1, 6):
+        slot = Slot(
+            station_id=station.id,
+            number=i,
+            status="full"
+        )
+        db.add(slot)
+
+    db.commit()
+
+    return {"status": "ok"}
 
 # =========================
 # 🔁 RETURN
@@ -1121,6 +1143,8 @@ class LoginToken(Base):
     __tablename__ = "login_tokens"
     token = Column(String, primary_key=True)
     user_id = Column(Integer, nullable=True)
+
+Base.metadata.create_all(bind=engine)
 
 from sqlalchemy import text
 
