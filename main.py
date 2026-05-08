@@ -315,7 +315,7 @@ def delete_card(card_id: int):
 def rent_powerbank(data: RentRequest):
     db = SessionLocal()
     try:
-        # 🔥 0. СТАНЦИЯ ИЗ БД
+        # 🔥 0. СТАНЦИЯ
         station = db.query(Station).filter(
             Station.id == data.station_id
         ).first()
@@ -353,7 +353,7 @@ def rent_powerbank(data: RentRequest):
         if not card:
             raise HTTPException(400, "Добавьте карту")
 
-        # 🔋 4. БЕРЁМ СЛОТ
+        # 🔋 4. СЛОТ
         slot = db.query(Slot).filter(
             Slot.station_id == data.station_id,
             Slot.status == "full"
@@ -362,26 +362,47 @@ def rent_powerbank(data: RentRequest):
         if not slot:
             raise HTTPException(400, "Нет доступных powerbank")
 
-        # 🔥 5. РЕЗЕРВИРУЕМ СЛОТ
-        slot.status = "reserved"
-        db.commit()
+        # 💳 5. СПИСАНИЕ
+        payment = charge_card(data.user_id, 7)
 
-        # ✅ 6. СОЗДАЁМ АРЕНДУ
-        rental = Rental(
-            user_id=data.user_id,
-            station_id=data.station_id,
-            status="pending",
-            start_time=datetime.utcnow()
-        )
+        if not payment["success"]:
+            raise HTTPException(400, payment.get("error", "Оплата не прошла"))
 
-        db.add(rental)
-        db.commit()
-        db.refresh(rental)
+        # 🔥 ВСЁ НИЖЕ — В ОДНОЙ ТРАНЗАКЦИИ
+        try:
+            # 🔋 резерв
+            slot.status = "reserved"
 
-        # 🔓 7. ГОВОРИМ СТАНЦИИ ЧТО ОТКРЫТЬ
+            # 📦 аренда
+            rental = Rental(
+                user_id=data.user_id,
+                station_id=data.station_id,
+                status="pending",
+                start_time=datetime.utcnow()
+            )
+
+            db.add(rental)
+            db.flush()  # 👈 получаем rental.id без commit
+
+            # 💰 платеж
+            payment_db = Payment(
+                rental_id=rental.id,
+                amount=7,
+                status="paid"
+            )
+
+            db.add(payment_db)
+
+            db.commit()
+
+        except:
+            db.rollback()
+            raise HTTPException(500, "Ошибка после оплаты")
+
+        # 🔓 ОТДАЁМ СЛОТ
         return {
             "rental_id": rental.id,
-            "slot_number": slot.number   # 👈 ВОТ ЭТО ГЛАВНОЕ
+            "slot_number": slot.number
         }
 
     finally:
@@ -639,6 +660,28 @@ def force_close():
 # =========================
 # 💰 PAYMENTS
 # =========================
+
+import random
+
+def charge_card(user_id: int, amount: float):
+    """
+    🔥 ФЕЙК ОПЛАТА
+    потом заменишь на Alif / Payme
+    """
+
+    # 💳 имитация карты
+    # например 90% успеха
+    if random.random() < 0.9:
+        return {
+            "success": True,
+            "transaction_id": f"fake_{random.randint(1000,9999)}"
+        }
+    else:
+        return {
+            "success": False,
+            "error": "Недостаточно средств"
+        }
+
 import requests
 
 ALIF_API = "https://alif.shop/api/payment/create"
