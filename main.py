@@ -30,43 +30,87 @@ from sqladmin import Admin
 
 admin = Admin(app=app, engine=engine, templates_dir="templates")
 
+# =========================
+# 💳 CARD
+# =========================
+
 class Card(Base):
     __tablename__ = "cards"
+
     id = Column(Integer, primary_key=True)
     user_id = Column(Integer)
+
     brand = Column(String)
     last4 = Column(String)
-    is_active = Column(Integer)
-    position = Column(Integer)
 
-class Rental(Base):
-    __tablename__ = "rentals"
-    id = Column(Integer, primary_key=True)
-    user_id = Column(Integer)
-    station_id = Column(Integer)
-    status = Column(String)
-    start_time = Column(DateTime)
-    end_time = Column(DateTime, nullable=True)
-    cost = Column(Float, default=0)
-    payment_status = Column(String, default="none")
+    is_active = Column(Integer, default=1)
+    position = Column(Integer, default=1)
 
-from datetime import datetime
 
-class Payment(Base):
-    __tablename__ = "payments"
-    id = Column(Integer, primary_key=True)
-    rental_id = Column(Integer)
-    amount = Column(Float)
-    status = Column(String)
-
-    created_at = Column(DateTime, default=datetime.utcnow)  # 🔥 ВОТ ЭТО
+# =========================
+# 👤 USER
+# =========================
 
 class User(Base):
     __tablename__ = "users"
+
     id = Column(Integer, primary_key=True)
+
     telegram_id = Column(String, unique=True)
     phone = Column(String, nullable=True)
     name = Column(String, nullable=True)
+
+    # 💰 НОВОЕ
+    balance = Column(Float, default=0)        # долг
+    is_blocked = Column(Integer, default=0)   # блок
+
+
+# =========================
+# 🔋 RENTAL
+# =========================
+
+class Rental(Base):
+    __tablename__ = "rentals"
+
+    id = Column(Integer, primary_key=True)
+
+    user_id = Column(Integer)
+    station_id = Column(Integer)
+
+    status = Column(String)  # pending / active / returned / lost
+
+    start_time = Column(DateTime)
+    end_time = Column(DateTime, nullable=True)
+
+    # 💰
+    cost = Column(Float, default=0)
+
+    hold_amount = Column(Float, default=0)      # 🔥 холд (14)
+    charged_amount = Column(Float, default=0)   # 🔥 списано
+
+    payment_status = Column(String, default="none")
+
+
+# =========================
+# 💰 PAYMENT
+# =========================
+
+class Payment(Base):
+    __tablename__ = "payments"
+
+    id = Column(Integer, primary_key=True)
+
+    rental_id = Column(Integer)
+    amount = Column(Float)
+
+    status = Column(String)  # pending / paid
+
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+
+# =========================
+# 🏢 STATION
+# =========================
 
 class Station(Base):
     __tablename__ = "stations"
@@ -78,9 +122,13 @@ class Station(Base):
     lat = Column(Float)
     lng = Column(Float)
 
-    status = Column(String, default="offline")  # online / offline
+    status = Column(String, default="offline")
     last_ping = Column(DateTime, nullable=True)
 
+
+# =========================
+# 🔌 SLOT
+# =========================
 
 class Slot(Base):
     __tablename__ = "slots"
@@ -88,8 +136,8 @@ class Slot(Base):
     id = Column(Integer, primary_key=True)
     station_id = Column(Integer)
 
-    number = Column(Integer)  # номер слота (1,2,3...)
-    status = Column(String)   # full / empty / reserved
+    number = Column(Integer)
+    status = Column(String)  # full / empty / reserved
 
 # =========================
 # ⚙️ APP
@@ -315,36 +363,22 @@ def delete_card(card_id: int):
 def rent_powerbank(data: RentRequest):
     db = SessionLocal()
     try:
-        # 🔥 0. СТАНЦИЯ
-        station = db.query(Station).filter(
-            Station.id == data.station_id
-        ).first()
+        # 👤 USER
+        user = db.query(User).filter(User.id == data.user_id).first()
 
-        if not station:
-            raise HTTPException(404, "Station not found")
+        if not user:
+            user = User(id=data.user_id)
+            db.add(user)
+            db.commit()
+            db.refresh(user)
 
-        if station.status != "online":
-            raise HTTPException(400, "Станция оффлайн")
+        if user.is_blocked:
+            raise HTTPException(403, "User blocked")
 
-        # ❌ 1. АКТИВНАЯ АРЕНДА
-        active = db.query(Rental).filter(
-            Rental.user_id == data.user_id,
-            Rental.status == "active"
-        ).first()
+        if user.balance > 0:
+            raise HTTPException(400, "Есть долг")
 
-        if active:
-            raise HTTPException(400, "Already has active rental")
-
-        # 💣 2. ДОЛГ
-        debt = db.query(Rental).filter(
-            Rental.user_id == data.user_id,
-            Rental.payment_status == "waiting"
-        ).first()
-
-        if debt:
-            raise HTTPException(400, "Сначала оплатите долг")
-
-        # 💳 3. КАРТА
+        # 💳 карта
         card = db.query(Card).filter(
             Card.user_id == data.user_id,
             Card.is_active == 1
@@ -353,56 +387,53 @@ def rent_powerbank(data: RentRequest):
         if not card:
             raise HTTPException(400, "Добавьте карту")
 
-        # 🔋 4. СЛОТ
+        # 🏢 станция
+        station = db.query(Station).filter(
+            Station.id == data.station_id
+        ).first()
+
+        if not station or station.status != "online":
+            raise HTTPException(400, "Станция оффлайн")
+
+        # ❌ активная аренда
+        active = db.query(Rental).filter(
+            Rental.user_id == data.user_id,
+            Rental.status == "active"
+        ).first()
+
+        if active:
+            raise HTTPException(400, "Already active rental")
+
+        # 🔋 слот
         slot = db.query(Slot).filter(
             Slot.station_id == data.station_id,
             Slot.status == "full"
         ).first()
 
         if not slot:
-            raise HTTPException(400, "Нет доступных powerbank")
+            raise HTTPException(400, "Нет powerbank")
 
-        # 💳 5. СПИСАНИЕ
-        payment = charge_card(data.user_id, 7)
+        slot.status = "reserved"
+        db.commit()
 
-        if not payment["success"]:
-            raise HTTPException(400, payment.get("error", "Оплата не прошла"))
+        HOLD = 14
 
-        # 🔥 ВСЁ НИЖЕ — В ОДНОЙ ТРАНЗАКЦИИ
-        try:
-            # 🔋 резерв
-            slot.status = "reserved"
+        rental = Rental(
+            user_id=data.user_id,
+            station_id=data.station_id,
+            status="pending",
+            start_time=datetime.utcnow(),
+            hold_amount=HOLD
+        )
 
-            # 📦 аренда
-            rental = Rental(
-                user_id=data.user_id,
-                station_id=data.station_id,
-                status="pending",
-                start_time=datetime.utcnow()
-            )
+        db.add(rental)
+        db.commit()
+        db.refresh(rental)
 
-            db.add(rental)
-            db.flush()  # 👈 получаем rental.id без commit
-
-            # 💰 платеж
-            payment_db = Payment(
-                rental_id=rental.id,
-                amount=7,
-                status="paid"
-            )
-
-            db.add(payment_db)
-
-            db.commit()
-
-        except:
-            db.rollback()
-            raise HTTPException(500, "Ошибка после оплаты")
-
-        # 🔓 ОТДАЁМ СЛОТ
         return {
             "rental_id": rental.id,
-            "slot_number": slot.number
+            "slot_number": slot.number,
+            "hold": HOLD
         }
 
     finally:
@@ -484,33 +515,20 @@ def station_ping(data: dict):
 @app.post("/station/confirm-take")
 def confirm_take(data: dict):
     db = SessionLocal()
+    try:
+        rental = db.query(Rental).filter(
+            Rental.id == data["rental_id"]
+        ).first()
 
-    rental = db.query(Rental).filter(
-        Rental.id == data["rental_id"]
-    ).first()
+        if not rental:
+            raise HTTPException(404, "Rental not found")
 
-    if not rental:
-        raise HTTPException(404, "Rental not found")
-
-    rental.status = "active"
-    db.commit()
-
-    return {"status": "ok"}
-
-@app.post("/station/ping")
-def ping(data: dict):
-    db = SessionLocal()
-
-    station = db.query(Station).filter(
-        Station.id == data["station_id"]
-    ).first()
-
-    if station:
-        station.last_ping = datetime.utcnow()
-        station.status = "online"
+        rental.status = "active"
         db.commit()
 
-    return {"ok": True}
+        return {"status": "ok"}
+    finally:
+        db.close()
 
 @app.post("/debug/return")
 def debug_return(data: dict):
@@ -563,7 +581,7 @@ def init():
 # =========================
 
 @app.post("/return")
-async def return_powerbank(data: ReturnRequest):
+def return_powerbank(data: ReturnRequest):
     db = SessionLocal()
     try:
         rental = db.query(Rental).filter(
@@ -574,52 +592,130 @@ async def return_powerbank(data: ReturnRequest):
         if not rental:
             raise HTTPException(404, "Not found")
 
-        if rental.status != "active":
-            raise HTTPException(400, "Уже завершено")
-
-        if rental.payment_status == "paid":
-            raise HTTPException(400, "Уже оплачено")
-
         rental.end_time = datetime.utcnow()
 
         duration = rental.end_time - rental.start_time
         hours = duration.total_seconds() / 3600
 
-        # 💰 расчёт стоимости
+        # 💰 тариф
         if hours <= 1:
-            cost = 7
+            charge = 7
         elif hours <= 24:
-            cost = 14
+            charge = 14
         else:
             extra_days = int((hours - 24) / 24) + 1
-            cost = 14 + (extra_days * 14)
+            charge = 14 + (extra_days * 14)
 
-        # 💣 ЛИМИТ
+        # 💣 лимит
         MAX_COST = 150
 
-        if cost >= MAX_COST:
-            cost = MAX_COST
+        if charge >= MAX_COST:
+            charge = MAX_COST
             rental.status = "lost"
         else:
             rental.status = "returned"
 
-        rental.cost = cost
-        rental.payment_status = "waiting"
+        user = db.query(User).filter(User.id == rental.user_id).first()
+
+        hold = rental.hold_amount or 0
+
+        # 💳 списание
+        if charge <= hold:
+            refund = hold - charge
+        else:
+            debt = charge - hold
+            user.balance += debt
+
+        # 🔥 ОСВОБОЖДАЕМ СЛОТ (ВАЖНО)
+        slot = db.query(Slot).filter(
+            Slot.station_id == rental.station_id,
+            Slot.status == "reserved"
+        ).first()
+
+        if slot:
+            slot.status = "full"
+
+        # 💣 штраф
+        if user.balance >= 100 and not user.is_blocked:
+            user.balance += 50
+            user.is_blocked = 1
+
+        # 🔒 кап
+        if user.balance >= 150:
+            user.balance = 150
+            user.is_blocked = 1
+
+        rental.cost = charge
+        rental.charged_amount = charge
+        rental.payment_status = "paid"
 
         db.commit()
 
-        ws = connections.get(rental.user_id)
-        if ws:
-            await ws.send_json({
-                "type": "rental_finished",
-                "cost": cost
-            })
-
         return {
-            "type": "rental_finished",
-            "cost": cost,
-            "rental_id": rental.id
+            "status": rental.status,
+            "charged": charge,
+            "balance": user.balance
         }
+
+    finally:
+        db.close()
+
+@app.post("/billing/run")
+def billing():
+    db = SessionLocal()
+    try:
+        rentals = db.query(Rental).filter(Rental.status == "active").all()
+
+        for r in rentals:
+            user = db.query(User).filter(User.id == r.user_id).first()
+
+            duration = datetime.utcnow() - r.start_time
+            days = max(1, int(duration.total_seconds() / 86400))
+
+            new_cost = days * 14
+
+            # 💣 лимит дня
+            if new_cost > 100:
+                new_cost = 100
+
+            if new_cost > r.cost:
+                diff = new_cost - r.cost
+                user.balance += diff
+                r.cost = new_cost
+
+            # штраф
+            if user.balance >= 100 and not user.is_blocked:
+                user.balance += 50
+                user.is_blocked = 1
+
+            if user.balance >= 150:
+                user.balance = 150
+                user.is_blocked = 1
+
+        db.commit()
+        return {"status": "ok"}
+
+    finally:
+        db.close()
+
+@app.post("/pay")
+def pay(user_id: int):
+    db = SessionLocal()
+    try:
+        user = db.query(User).filter(User.id == user_id).first()
+
+        if not user:
+            raise HTTPException(404, "User not found")
+
+        if user.balance == 0:
+            raise HTTPException(400, "Нет долга")
+
+        user.balance = 0
+        user.is_blocked = 0
+
+        db.commit()
+
+        return {"status": "paid"}
 
     finally:
         db.close()
@@ -651,6 +747,8 @@ def force_close():
         if cost >= MAX_COST:
             r.status = "lost"
             r.cost = MAX_COST
+            user = db.query(User).filter(User.id == r.user_id).first()
+            user.balance += MAX_COST
             r.payment_status = "waiting"
             r.end_time = datetime.utcnow()
 
@@ -660,28 +758,6 @@ def force_close():
 # =========================
 # 💰 PAYMENTS
 # =========================
-
-import random
-
-def charge_card(user_id: int, amount: float):
-    """
-    🔥 ФЕЙК ОПЛАТА
-    потом заменишь на Alif / Payme
-    """
-
-    # 💳 имитация карты
-    # например 90% успеха
-    if random.random() < 0.9:
-        return {
-            "success": True,
-            "transaction_id": f"fake_{random.randint(1000,9999)}"
-        }
-    else:
-        return {
-            "success": False,
-            "error": "Недостаточно средств"
-        }
-
 import requests
 
 ALIF_API = "https://alif.shop/api/payment/create"
