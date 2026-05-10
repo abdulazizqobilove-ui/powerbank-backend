@@ -605,3 +605,44 @@ async def ws(ws: WebSocket, user_id: int):
 
     finally:
         connections[user_id].remove(ws)
+
+class ReturnRequest(BaseModel):
+    rental_id: int
+
+
+@app.post("/return")
+def return_powerbank(data: ReturnRequest):
+
+    db = SessionLocal()
+
+    try:
+
+        rental = db.query(Rental).filter(
+            Rental.id == data.rental_id
+        ).first()
+
+        if not rental:
+            raise HTTPException(404, "Rental not found")
+
+        rental.status = "finished"
+        rental.end_time = datetime.utcnow()
+
+        minutes = max(
+            1,
+            int(
+                (rental.end_time - rental.start_time)
+                .total_seconds() / 60
+            )
+        )
+
+        rental.cost = minutes * 500
+
+        db.commit()
+
+        return {
+            "success": True,
+            "cost": rental.cost
+        }
+
+    finally:
+        db.close()
