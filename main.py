@@ -581,58 +581,6 @@ def rent(
 # 📜 RENTALS
 # =========================
 
-@app.get("/rentals/{user_id}")
-def get_rentals(
-    user_id: int,
-    authorization: str = Header(None)
-):
-
-    db = SessionLocal()
-
-    try:
-
-    user = get_user_by_token(
-        authorization
-    )
-
-    if not user:
-        raise HTTPException(
-            401,
-            "Unauthorized"
-        )
-
-    if user.id != user_id:
-        raise HTTPException(
-            403,
-            "Forbidden"
-        )
-
-    try:
-
-        data = db.query(Rental).filter(
-            Rental.user_id == user_id
-        ).all()
-
-        return [
-            {
-                "id": r.id,
-                "status": r.status,
-                "cost": r.cost,
-                "payment_status": r.payment_status,
-                "start_time": r.start_time.isoformat(),
-                "end_time": r.end_time.isoformat()
-                if r.end_time else None
-            }
-            for r in data
-        ]
-
-    finally:
-        db.close()
-
-# =========================
-# 🔁 RETURN
-# =========================
-
 @app.post("/return")
 async def return_powerbank(
     data: ReturnRequest,
@@ -643,9 +591,9 @@ async def return_powerbank(
 
     try:
 
-    user = get_user_by_token(
-        authorization
-    )
+        user = get_user_by_token(
+            authorization
+        )
 
         if not user:
             raise HTTPException(
@@ -681,16 +629,15 @@ async def return_powerbank(
 
         rental.status = "returned"
 
-        user = db.query(User).filter(
+        user_db = db.query(User).filter(
             User.id == rental.user_id
         ).first()
 
-        if user:
-            user.is_blocked = 0
+        if user_db:
+            user_db.is_blocked = 0
 
         rental.cost = cost
 
-        # 🔥 ALIF CAPTURE
         success = capture_hold(
             rental.hold_id,
             rental.cost,
@@ -698,11 +645,9 @@ async def return_powerbank(
 
         if success:
             rental.payment_status = "paid"
-
         else:
             rental.payment_status = "failed"
 
-        # 🔥 UPDATE PAYMENT
         payment = db.query(Payment).filter(
             Payment.transaction_id == rental.hold_id
         ).first()
@@ -848,9 +793,9 @@ def add_card(
 
     try:
 
-    user = get_user_by_token(
-        authorization
-    )
+        user = get_user_by_token(
+            authorization
+        )
 
         if not user:
             raise HTTPException(
@@ -859,13 +804,13 @@ def add_card(
             )
 
         db.query(Card).filter(
-            Card.user_id == data.user_id
+            Card.user_id == user.id
         ).update({
             "is_active": 0
         })
 
         last_card = db.query(Card).filter(
-            Card.user_id == data.user_id
+            Card.user_id == user.id
         ).order_by(
             Card.position.desc()
         ).first()
@@ -873,7 +818,9 @@ def add_card(
         next_position = 1
 
         if last_card:
-            next_position = (last_card.position or 0) + 1
+            next_position = (
+                last_card.position or 0
+            ) + 1
 
         card = Card(
             user_id=user.id,
