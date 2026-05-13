@@ -74,6 +74,7 @@ class User(Base):
 
     phone = Column(String, nullable=True)
     name = Column(String, nullable=True)
+    is_blocked = Column(Integer, default=0)
 
 
 class LoginToken(Base):
@@ -175,73 +176,6 @@ stations = [
 @app.get("/stations")
 def get_stations():
     return stations
-
-# =========================
-# 💳 CARDS
-# =========================
-
-@app.get("/cards/{user_id}")
-def get_cards(user_id: int):
-    db = SessionLocal()
-
-    try:
-        cards = db.query(Card).filter(
-            Card.user_id == user_id
-        ).order_by(Card.position, Card.id).all()
-
-        return [
-            {
-                "id": c.id,
-                "brand": c.brand,
-                "last4": c.last4,
-                "is_active": c.is_active
-            }
-            for c in cards
-        ]
-
-    finally:
-        db.close()
-
-
-@app.post("/cards/add")
-def add_card(data: CardRequest):
-    db = SessionLocal()
-
-    try:
-        db.query(Card).filter(
-            Card.user_id == data.user_id
-        ).update({"is_active": 0})
-
-        last_card = db.query(Card).filter(
-            Card.user_id == data.user_id
-        ).order_by(Card.position.desc()).first()
-
-        next_position = 1
-
-        if last_card:
-            next_position = (last_card.position or 0) + 1
-
-        card = Card(
-            user_id=data.user_id,
-            brand="VISA",
-            last4=data.number[-4:],
-            is_active=1,
-            position=next_position
-        )
-
-        db.add(card)
-
-        db.commit()
-        db.refresh(card)
-
-        return {
-            "id": card.id,
-            "brand": card.brand,
-            "last4": card.last4
-        }
-
-    finally:
-        db.close()
 
 # =========================
 # 💰 PAYMENTS
@@ -385,23 +319,43 @@ def rent(data: RentRequest):
     db = SessionLocal()
 
     try:
+
+        user = db.query(User).filter(
+            User.id == data.user_id
+        ).first()
+
+        if user and user.is_blocked:
+            raise HTTPException(
+                403,
+                "Аккаунт временно заблокирован"
+            )
+
         station = next(
             (s for s in stations if s["id"] == data.station_id),
             None
         )
 
         if not station:
-            raise HTTPException(404, "Station not found")
+            raise HTTPException(
+                404,
+                "Station not found"
+            )
 
         if station["powerbanks"] <= 0:
-            raise HTTPException(400, "Нет powerbank")
+            raise HTTPException(
+                400,
+                "Нет powerbank"
+            )
 
         last = db.query(Rental).filter(
             Rental.user_id == data.user_id
         ).order_by(Rental.id.desc()).first()
 
         if last and last.status == "active":
-            raise HTTPException(400, "Already renting")
+            raise HTTPException(
+                400,
+                "Already renting"
+            )
 
         unpaid = db.query(Rental).filter(
             Rental.user_id == data.user_id,
@@ -411,21 +365,17 @@ def rent(data: RentRequest):
 
         debt_sum = sum(r.cost or 0 for r in unpaid)
 
-        if debt_sum > 50000:
-            raise HTTPException(400, "Превышен лимит долга")
-
-        hold = create_hold(data.user_id, 20000)
-
-        if not hold["success"]:
-            raise HTTPException(400, "Недостаточно средств")
+        if debt_sum > 150:
+            raise HTTPException(
+                400,
+                "Превышен лимит долга"
+            )
 
         rental = Rental(
             user_id=data.user_id,
             station_id=data.station_id,
             status="active",
             start_time=datetime.utcnow(),
-            hold_id=hold["hold_id"],
-            hold_amount=20000
         )
 
         station["powerbanks"] -= 1
@@ -435,7 +385,9 @@ def rent(data: RentRequest):
         db.commit()
         db.refresh(rental)
 
-        return {"id": rental.id}
+        return {
+            "id": rental.id
+        }
 
     finally:
         db.close()
@@ -477,6 +429,7 @@ async def return_powerbank(data: ReturnRequest):
     db = SessionLocal()
 
     try:
+
         rental = db.query(Rental).filter(
             Rental.id == data.rental_id
         ).first()
@@ -495,26 +448,26 @@ async def return_powerbank(data: ReturnRequest):
 
         if hours <= 1:
             cost = 7
+
         elif hours <= 24:
             cost = 14
+
         else:
             extra_days = int((hours - 24) / 24) + 1
             cost = 14 + (extra_days * 14)
 
-        if cost >= 150:
-            cost = 150
-            rental.status = "lost"
-        else:
-            rental.status = "returned"
+        rental.status = "returned"
 
-        if hours > 24:
-            cost += 10
+        user = db.query(User).filter(
+            User.id == rental.user_id
+        ).first()
+
+        if user:
+            user.is_blocked = 0
 
         rental.cost = cost
 
-        success = capture_hold(rental.hold_id, cost)
-
-        rental.payment_status = "paid" if success else "failed"
+        rental.payment_status = "paid"
 
         station = next(
             (s for s in stations if s["id"] == rental.station_id),
@@ -532,7 +485,9 @@ async def return_powerbank(data: ReturnRequest):
                 "cost": cost
             })
 
-        return {"cost": cost}
+        return {
+            "cost": cost
+        }
 
     finally:
         db.close()
@@ -606,42 +561,178 @@ async def ws(ws: WebSocket, user_id: int):
     finally:
         connections[user_id].remove(ws)
 
-class ReturnRequest(BaseModel):
-    rental_id: int
+# =========================
+# 💳 CARDS
+# =========================
+
+class SelectCardRequest(BaseModel):
+    user_id: int
+    card_id: int
 
 
-@app.post("/return")
-def return_powerbank(data: ReturnRequest):
+@app.get("/cards/{user_id}")
+def get_cards(user_id: int):
 
     db = SessionLocal()
 
     try:
 
-        rental = db.query(Rental).filter(
-            Rental.id == data.rental_id
+        cards = db.query(Card).filter(
+            Card.user_id == user_id
+        ).order_by(
+            Card.is_active.desc(),
+            Card.position,
+            Card.id
+        ).all()
+
+        return [
+            {
+                "id": c.id,
+                "brand": c.brand,
+                "last4": c.last4,
+                "is_active": c.is_active
+            }
+            for c in cards
+        ]
+
+    finally:
+        db.close()
+
+
+@app.post("/cards/add")
+def add_card(data: CardRequest):
+
+    db = SessionLocal()
+
+    try:
+
+        db.query(Card).filter(
+            Card.user_id == data.user_id
+        ).update({
+            "is_active": 0
+        })
+
+        last_card = db.query(Card).filter(
+            Card.user_id == data.user_id
+        ).order_by(
+            Card.position.desc()
         ).first()
 
-        if not rental:
-            raise HTTPException(404, "Rental not found")
+        next_position = 1
 
-        rental.status = "finished"
-        rental.end_time = datetime.utcnow()
+        if last_card:
+            next_position = (last_card.position or 0) + 1
 
-        minutes = max(
-            1,
-            int(
-                (rental.end_time - rental.start_time)
-                .total_seconds() / 60
-            )
+        card = Card(
+            user_id=data.user_id,
+            brand="VISA",
+            last4=data.number[-4:],
+            is_active=1,
+            position=next_position
         )
 
-        rental.cost = minutes * 500
+        db.add(card)
+
+        db.commit()
+        db.refresh(card)
+
+        return {
+            "id": card.id,
+            "brand": card.brand,
+            "last4": card.last4,
+            "is_active": 1
+        }
+
+    finally:
+        db.close()
+
+
+@app.post("/cards/select")
+def select_card(data: SelectCardRequest):
+
+    db = SessionLocal()
+
+    try:
+
+        selected = db.query(Card).filter(
+            Card.id == data.card_id,
+            Card.user_id == data.user_id
+        ).first()
+
+        if not selected:
+            raise HTTPException(
+                404,
+                "Card not found"
+            )
+
+        db.query(Card).filter(
+            Card.user_id == data.user_id
+        ).update({
+            "is_active": 0
+        })
+
+        selected.is_active = 1
 
         db.commit()
 
         return {
-            "success": True,
-            "cost": rental.cost
+            "success": True
+        }
+
+    finally:
+        db.close()
+
+
+@app.delete("/cards/{card_id}")
+def delete_card(card_id: int):
+
+    db = SessionLocal()
+
+    try:
+
+        card = db.query(Card).filter(
+            Card.id == card_id
+        ).first()
+
+        if not card:
+            raise HTTPException(
+                404,
+                "Card not found"
+            )
+
+        user_cards = db.query(Card).filter(
+            Card.user_id == card.user_id
+        ).all()
+
+        if len(user_cards) <= 1:
+            raise HTTPException(
+                400,
+                "Нельзя удалить последнюю карту"
+            )
+
+        was_active = card.is_active == 1
+
+        user_id = card.user_id
+
+        db.delete(card)
+
+        db.commit()
+
+        if was_active:
+
+            new_card = db.query(Card).filter(
+                Card.user_id == user_id
+            ).order_by(
+                Card.position,
+                Card.id
+            ).first()
+
+            if new_card:
+                new_card.is_active = 1
+                db.commit()
+
+        return {
+            "success": True
         }
 
     finally:
