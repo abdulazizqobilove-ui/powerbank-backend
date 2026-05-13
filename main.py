@@ -84,19 +84,6 @@ class Card(Base):
     position = Column(Integer)
 
 
-class Payment(Base):
-    __tablename__ = "payments"
-
-    id = Column(Integer, primary_key=True)
-
-    rental_id = Column(Integer)
-
-    amount = Column(Float)
-    status = Column(String)
-
-    created_at = Column(DateTime, default=datetime.utcnow)
-
-
 class User(Base):
     __tablename__ = "users"
 
