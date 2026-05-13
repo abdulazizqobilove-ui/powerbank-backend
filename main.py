@@ -10,6 +10,7 @@ from fastapi import Request
 import threading
 import time
 import uuid
+from fastapi import Header
 
 app = FastAPI()
 
@@ -169,6 +170,18 @@ admin.add_view(PaymentAdmin)
 # 📦 REQUEST MODELS
 # =========================
 
+class SelectCardRequest(BaseModel):
+    user_id: int
+    card_id: int
+
+class SendCodeRequest(BaseModel):
+    phone: str
+
+
+class VerifyCodeRequest(BaseModel):
+    phone: str
+    code: str
+
 class RentRequest(BaseModel):
     station_id: int
     user_id: int
@@ -218,6 +231,75 @@ with engine.begin() as conn:
             conn.execute(text(q))
         except:
             pass
+
+@app.post("/auth/send-code")
+def send_code(data: SendCodeRequest):
+
+    code = "1111"
+
+    otp_codes[data.phone] = code
+
+    print(f"OTP {data.phone}: {code}")
+
+    return {
+        "success": True
+    }
+
+
+@app.post("/auth/verify-code")
+def verify_code(data: VerifyCodeRequest):
+
+    saved = otp_codes.get(data.phone)
+
+    if not saved:
+        raise HTTPException(
+            400,
+            "Код не найден"
+        )
+
+    if saved != data.code:
+        raise HTTPException(
+            400,
+            "Неверный код"
+        )
+
+    db = SessionLocal()
+
+    try:
+
+        user = db.query(User).filter(
+            User.phone == data.phone
+        ).first()
+
+        if not user:
+
+            user = User(
+                telegram_id=str(uuid.uuid4()),
+                phone=data.phone,
+                name="User"
+            )
+
+            db.add(user)
+            db.commit()
+            db.refresh(user)
+
+        token = str(uuid.uuid4())
+
+        login = LoginToken(
+            token=token,
+            user_id=user.id
+        )
+
+        db.add(login)
+        db.commit()
+
+        return {
+            "token": token,
+            "user_id": user.id
+        }
+
+    finally:
+        db.close()
 # =========================
 # 📍 STATIONS
 # =========================
@@ -354,21 +436,51 @@ def confirm_payment(data: ConfirmPaymentRequest):
 # =========================
 
 connections = {}
+otp_codes = {}
+
+def get_user_by_token(token: str):
+
+    db = SessionLocal()
+
+    try:
+
+        login = db.query(LoginToken).filter(
+            LoginToken.token == token
+        ).first()
+
+        if not login:
+            return None
+
+        return db.query(User).filter(
+            User.id == login.user_id
+        ).first()
+
+    finally:
+        db.close()
 
 # =========================
 # 🔋 RENT
 # =========================
 
 @app.post("/rent")
-def rent(data: RentRequest):
+def rent(
+    data: RentRequest,
+    authorization: str = Header(None)
+):
 
     db = SessionLocal()
 
     try:
 
-        user = db.query(User).filter(
-            User.id == data.user_id
-        ).first()
+        user = get_user_by_token(
+            authorization
+        )
+
+        if not user:
+            raise HTTPException(
+                401,
+                "Unauthorized"
+            )
 
         if user and user.is_blocked:
             raise HTTPException(
@@ -394,7 +506,7 @@ def rent(data: RentRequest):
             )
 
         last = db.query(Rental).filter(
-            Rental.user_id == data.user_id
+            Rental.user_id == user.id
         ).order_by(Rental.id.desc()).first()
 
         if last and last.status == "active":
@@ -404,7 +516,7 @@ def rent(data: RentRequest):
             )
 
         unpaid = db.query(Rental).filter(
-            Rental.user_id == data.user_id,
+            Rental.user_id == user.id,
             Rental.payment_status != "paid",
             Rental.status != "active"
         ).all()
@@ -419,7 +531,7 @@ def rent(data: RentRequest):
 
         # 🔥 ALIF HOLD
         hold = create_hold(
-            data.user_id,
+            user.id,
             20000
         )
 
@@ -430,7 +542,7 @@ def rent(data: RentRequest):
             )
 
         rental = Rental(
-            user_id=data.user_id,
+            user_id=user.id,
             station_id=data.station_id,
             status="active",
             start_time=datetime.utcnow(),
@@ -470,8 +582,27 @@ def rent(data: RentRequest):
 # =========================
 
 @app.get("/rentals/{user_id}")
-def rentals(user_id: int):
+def get_rentals(
+    user_id: int,
+    authorization: str = Header(None)
+):
     db = SessionLocal()
+
+        user = get_user_by_token(
+        authorization
+    )
+
+    if not user:
+        raise HTTPException(
+            401,
+            "Unauthorized"
+        )
+
+    if user.id != user_id:
+        raise HTTPException(
+            403,
+            "Forbidden"
+        )
 
     try:
         data = db.query(Rental).filter(
@@ -498,11 +629,24 @@ def rentals(user_id: int):
 # =========================
 
 @app.post("/return")
-async def return_powerbank(data: ReturnRequest):
+async def return_powerbank(
+    data: ReturnRequest,
+    authorization: str = Header(None)
+):
 
     db = SessionLocal()
 
     try:
+
+                user = get_user_by_token(
+            authorization
+        )
+
+        if not user:
+            raise HTTPException(
+                401,
+                "Unauthorized"
+            )
 
         rental = db.query(Rental).filter(
             Rental.id == data.rental_id
@@ -661,11 +805,6 @@ async def ws(ws: WebSocket, user_id: int):
 # 💳 CARDS
 # =========================
 
-class SelectCardRequest(BaseModel):
-    user_id: int
-    card_id: int
-
-
 @app.get("/cards/{user_id}")
 def get_cards(user_id: int):
 
@@ -695,11 +834,23 @@ def get_cards(user_id: int):
 
 
 @app.post("/cards/add")
-def add_card(data: CardRequest):
+def add_card(
+    data: AddCardRequest,
+    authorization: str = Header(None)
+):
 
     db = SessionLocal()
 
     try:
+                user = get_user_by_token(
+            authorization
+        )
+
+        if not user:
+            raise HTTPException(
+                401,
+                "Unauthorized"
+            )
 
         db.query(Card).filter(
             Card.user_id == data.user_id
@@ -719,7 +870,7 @@ def add_card(data: CardRequest):
             next_position = (last_card.position or 0) + 1
 
         card = Card(
-            user_id=data.user_id,
+            user_id=user.id
             brand="VISA",
             last4=data.number[-4:],
             is_active=1,
