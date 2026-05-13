@@ -191,7 +191,7 @@ class ReturnRequest(BaseModel):
     rental_id: int
 
 
-class CardRequest(BaseModel):
+class AddCardRequest(BaseModel):
     user_id: int
     number: str
 
@@ -586,9 +586,12 @@ def get_rentals(
     user_id: int,
     authorization: str = Header(None)
 ):
+
     db = SessionLocal()
 
-        user = get_user_by_token(
+    try:
+
+    user = get_user_by_token(
         authorization
     )
 
@@ -605,6 +608,7 @@ def get_rentals(
         )
 
     try:
+
         data = db.query(Rental).filter(
             Rental.user_id == user_id
         ).all()
@@ -616,7 +620,8 @@ def get_rentals(
                 "cost": r.cost,
                 "payment_status": r.payment_status,
                 "start_time": r.start_time.isoformat(),
-                "end_time": r.end_time.isoformat() if r.end_time else None
+                "end_time": r.end_time.isoformat()
+                if r.end_time else None
             }
             for r in data
         ]
@@ -638,9 +643,9 @@ async def return_powerbank(
 
     try:
 
-                user = get_user_by_token(
-            authorization
-        )
+    user = get_user_by_token(
+        authorization
+    )
 
         if not user:
             raise HTTPException(
@@ -842,9 +847,10 @@ def add_card(
     db = SessionLocal()
 
     try:
-                user = get_user_by_token(
-            authorization
-        )
+
+    user = get_user_by_token(
+        authorization
+    )
 
         if not user:
             raise HTTPException(
@@ -870,7 +876,7 @@ def add_card(
             next_position = (last_card.position or 0) + 1
 
         card = Card(
-            user_id=user.id
+            user_id=user.id,
             brand="VISA",
             last4=data.number[-4:],
             is_active=1,
