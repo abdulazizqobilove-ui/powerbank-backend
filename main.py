@@ -3,6 +3,7 @@ from pydantic import BaseModel
 from datetime import datetime
 from sqlalchemy import create_engine, Column, Integer, String, DateTime, Float
 from sqlalchemy.orm import declarative_base, sessionmaker
+from sqladmin import Admin, ModelView
 
 import threading
 import time
@@ -34,6 +35,11 @@ engine = create_engine(
 )
 SessionLocal = sessionmaker(bind=engine)
 Base = declarative_base()
+
+admin = Admin(
+    app=app,
+    engine=engine
+)
 
 # =========================
 # 📦 DATABASE MODELS
@@ -105,6 +111,33 @@ class Rental(Base):
     charged_amount = Column(Float, default=0)
 
     payment_status = Column(String, default="none")
+
+class UserAdmin(ModelView, model=User):
+    column_list = [User.id, User.telegram_id, User.name]
+
+class CardAdmin(ModelView, model=Card):
+    column_list = [Card.id, Card.user_id, Card.last4]
+
+class RentalAdmin(ModelView, model=Rental):
+    column_list = [
+        Rental.id,
+        Rental.user_id,
+        Rental.status,
+        Rental.cost,
+        Rental.payment_status
+    ]
+
+class PaymentAdmin(ModelView, model=Payment):
+    column_list = [
+        Payment.id,
+        Payment.amount,
+        Payment.status
+    ]
+
+admin.add_view(UserAdmin)
+admin.add_view(CardAdmin)
+admin.add_view(RentalAdmin)
+admin.add_view(PaymentAdmin)
 
 # =========================
 # 📦 REQUEST MODELS
