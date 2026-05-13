@@ -4,6 +4,8 @@ from datetime import datetime
 from sqlalchemy import create_engine, Column, Integer, String, DateTime, Float
 from sqlalchemy.orm import declarative_base, sessionmaker
 from sqladmin import Admin, ModelView
+from alif import create_hold, capture_hold
+from fastapi import Request
 
 import threading
 import time
@@ -44,6 +46,30 @@ admin = Admin(
 # =========================
 # 📦 DATABASE MODELS
 # =========================
+
+class Payment(Base):
+
+    __tablename__ = "payments"
+
+    id = Column(
+        Integer,
+        primary_key=True,
+    )
+
+    rental_id = Column(Integer)
+
+    amount = Column(Integer)
+
+    provider = Column(String)
+
+    transaction_id = Column(String)
+
+    status = Column(String)
+
+    created_at = Column(
+        DateTime,
+        default=datetime.utcnow,
+    )
 
 class Card(Base):
     __tablename__ = "cards"
@@ -91,26 +117,34 @@ class LoginToken(Base):
 
 
 class Rental(Base):
+
     __tablename__ = "rentals"
 
     id = Column(Integer, primary_key=True)
 
     user_id = Column(Integer)
+
     station_id = Column(Integer)
 
     status = Column(String)
 
-    start_time = Column(DateTime)
-    end_time = Column(DateTime, nullable=True)
+    cost = Column(Integer, default=0)
 
-    cost = Column(Float, default=0)
+    payment_status = Column(
+        String,
+        default="none"
+    )
 
-    hold_id = Column(String, nullable=True)
-    hold_amount = Column(Float, default=0)
+    hold_id = Column(String)
 
-    charged_amount = Column(Float, default=0)
+    hold_amount = Column(Integer)
 
-    payment_status = Column(String, default="none")
+    start_time = Column(
+        DateTime,
+        default=datetime.utcnow
+    )
+
+    end_time = Column(DateTime)
 
 class UserAdmin(ModelView, model=User):
     column_list = [User.id, User.telegram_id, User.name]
@@ -128,10 +162,15 @@ class RentalAdmin(ModelView, model=Rental):
     ]
 
 class PaymentAdmin(ModelView, model=Payment):
+
     column_list = [
         Payment.id,
+        Payment.rental_id,
         Payment.amount,
-        Payment.status
+        Payment.provider,
+        Payment.transaction_id,
+        Payment.status,
+        Payment.created_at,
     ]
 
 admin.add_view(UserAdmin)
@@ -167,7 +206,7 @@ class ConfirmPaymentRequest(BaseModel):
 # =========================
 # 🗄 CREATE TABLES
 # =========================
-
+Base.metadata.create_all(bind=engine)
 Base.metadata.create_all(engine)
 
 from sqlalchemy import text
@@ -324,20 +363,6 @@ def confirm_payment(data: ConfirmPaymentRequest):
         db.close()
 
 # =========================
-# 💳 HOLD / CAPTURE
-# =========================
-
-def create_hold(user_id: int, amount: float):
-    return {
-        "success": True,
-        "hold_id": f"HOLD_{user_id}_{int(datetime.utcnow().timestamp())}"
-    }
-
-
-def capture_hold(hold_id: str, amount: float):
-    return True
-
-# =========================
 # 🔌 CONNECTIONS
 # =========================
 
@@ -349,6 +374,7 @@ connections = {}
 
 @app.post("/rent")
 def rent(data: RentRequest):
+
     db = SessionLocal()
 
     try:
@@ -404,11 +430,25 @@ def rent(data: RentRequest):
                 "Превышен лимит долга"
             )
 
+        # 🔥 ALIF HOLD
+        hold = create_hold(
+            data.user_id,
+            20000
+        )
+
+        if not hold["success"]:
+            raise HTTPException(
+                400,
+                "Ошибка hold оплаты"
+            )
+
         rental = Rental(
             user_id=data.user_id,
             station_id=data.station_id,
             status="active",
             start_time=datetime.utcnow(),
+            hold_id=hold["hold_id"],
+            hold_amount=20000,
         )
 
         station["powerbanks"] -= 1
@@ -417,6 +457,19 @@ def rent(data: RentRequest):
 
         db.commit()
         db.refresh(rental)
+
+        # 🔥 PAYMENT SAVE
+        payment = Payment(
+            rental_id=rental.id,
+            amount=20000,
+            provider="alif",
+            transaction_id=hold["hold_id"],
+            status="hold",
+        )
+
+        db.add(payment)
+
+        db.commit()
 
         return {
             "id": rental.id
@@ -459,6 +512,7 @@ def rentals(user_id: int):
 
 @app.post("/return")
 async def return_powerbank(data: ReturnRequest):
+
     db = SessionLocal()
 
     try:
@@ -500,7 +554,27 @@ async def return_powerbank(data: ReturnRequest):
 
         rental.cost = cost
 
-        rental.payment_status = "paid"
+        # 🔥 ALIF CAPTURE
+        success = capture_hold(
+            rental.hold_id,
+            rental.cost,
+        )
+
+        if success:
+            rental.payment_status = "paid"
+
+        else:
+            rental.payment_status = "failed"
+
+        # 🔥 UPDATE PAYMENT
+        payment = db.query(Payment).filter(
+            Payment.transaction_id == rental.hold_id
+        ).first()
+
+        if payment:
+
+            payment.status = rental.payment_status
+            payment.amount = rental.cost
 
         station = next(
             (s for s in stations if s["id"] == rental.station_id),
@@ -513,13 +587,15 @@ async def return_powerbank(data: ReturnRequest):
         db.commit()
 
         for ws in connections.get(rental.user_id, []):
+
             await ws.send_json({
                 "type": "rental_finished",
                 "cost": cost
             })
 
         return {
-            "cost": cost
+            "cost": cost,
+            "payment_status": rental.payment_status
         }
 
     finally:
@@ -769,3 +845,15 @@ def delete_card(card_id: int):
 
     finally:
         db.close()
+
+@app.post("/payments/webhook")
+async def alif_webhook(request: Request):
+
+    data = await request.json()
+
+    print("WEBHOOK:")
+    print(data)
+
+    return {
+        "success": True
+    }
