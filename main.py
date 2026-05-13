@@ -580,7 +580,6 @@ def get_cards(user_id: int):
         cards = db.query(Card).filter(
             Card.user_id == user_id
         ).order_by(
-            Card.is_active.desc(),
             Card.position,
             Card.id
         ).all()
