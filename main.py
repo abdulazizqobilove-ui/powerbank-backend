@@ -527,8 +527,15 @@ def verify_code(data: VerifyCodeRequest):
         db.commit()
 
         return {
+
             "token": token,
-            "user_id": user.id
+
+            "user": {
+
+                "id": user.id,
+
+                "phone": user.phone,
+            }
         }
 
     finally:
@@ -769,6 +776,9 @@ def get_stations():
                 "id": s.id,
                 "name": s.name,
                 "powerbanks": s.powerbanks,
+                "empty_slots": s.slots - s.powerbanks,
+                "online": s.online,
+                "address": s.address,
                 "lat": s.lat,
                 "lng": s.lng,
             }
