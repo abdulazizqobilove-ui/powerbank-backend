@@ -58,7 +58,11 @@ STATION_TIMEOUT = 120    # секунд до offline
 # 🗄 DATABASE
 # =========================
 
-engine       = create_engine(DATABASE_URL, pool_pre_ping=True)
+engine = create_engine(
+    DATABASE_URL,
+    pool_pre_ping=True,
+    connect_args={"sslmode": "require"}
+)
 SessionLocal = sessionmaker(bind=engine)
 Base         = declarative_base()
 
