@@ -47,7 +47,7 @@ if DATABASE_URL.startswith("postgres://"):
         1
     )
 
-if "sslmode=" not in DATABASE_URL:
+if DATABASE_URL.startswith("postgresql://") and "sslmode=" not in DATABASE_URL:
     DATABASE_URL += "?sslmode=require"
 
 MQTT_HOST     = os.getenv("MQTT_HOST", "localhost")
@@ -289,6 +289,7 @@ _migrations = [
     "ALTER TABLE rentals ADD COLUMN hold_amount FLOAT DEFAULT 0",
     "ALTER TABLE rentals ADD COLUMN hold_id VARCHAR",
     "ALTER TABLE rentals ADD COLUMN charged_amount FLOAT DEFAULT 0",
+    "ALTER TABLE rentals ADD COLUMN slot_number INTEGER",
 ]
 with engine.begin() as conn:
     for q in _migrations:
