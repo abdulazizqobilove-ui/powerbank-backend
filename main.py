@@ -625,6 +625,78 @@ def verify_code(data: VerifyCodeRequest):
     finally:
         db.close()
 
+#====================================
+#me
+#=====================================
+
+@app.get("/me")
+def get_me(authorization: str = Header(None)):
+
+    user = require_user(authorization)
+
+    db = get_db()
+
+    try:
+
+        cards = db.query(Card).filter(
+            Card.user_id == user.id
+        ).all()
+
+        rentals = db.query(Rental).filter(
+            Rental.user_id == user.id
+        ).order_by(Rental.id.desc()).all()
+
+        active_rental = next(
+            (
+                r for r in rentals
+                if r.status in ["active", "pending"]
+            ),
+            None
+        )
+
+        return {
+
+            "id": user.id,
+            "phone": user.phone,
+            "name": user.name,
+            "balance": user.balance,
+
+            "cards": [
+                {
+                    "id": c.id,
+                    "brand": c.brand,
+                    "last4": c.last4,
+                    "is_active": c.is_active,
+                }
+                for c in cards
+            ],
+
+            "active_rental": (
+                {
+                    "id": active_rental.id,
+                    "station_id": active_rental.station_id,
+                    "status": active_rental.status,
+                    "start_time": active_rental.start_time,
+                }
+                if active_rental else None
+            ),
+
+            "history": [
+                {
+                    "id": r.id,
+                    "status": r.status,
+                    "cost": r.cost,
+                    "station_id": r.station_id,
+                    "start_time": r.start_time,
+                    "end_time": r.end_time,
+                }
+                for r in rentals
+            ]
+        }
+
+    finally:
+        db.close()
+
 # =========================
 # 📍 STATIONS
 # =========================
