@@ -44,6 +44,7 @@ from sqlalchemy import create_engine, Column, Integer, String, DateTime, Float, 
 from sqlalchemy.orm import declarative_base, sessionmaker
 from sqladmin import Admin, ModelView
 from twilio.rest import Client
+from fastapi import UploadFile, File
 
 # =========================
 # 🪵 LOGGING
@@ -103,6 +104,7 @@ class User(Base):
     name        = Column(String, nullable=True)
     balance     = Column(Float, default=0)
     is_blocked  = Column(Integer, default=0)
+    avatar = Column(String, nullable=True)
 
 
 class LoginToken(Base):
@@ -294,6 +296,10 @@ admin.add_view(StationLogAdmin)
 admin.add_view(RentalAdmin)
 admin.add_view(PaymentAdmin)
 
+from fastapi.staticfiles import StaticFiles
+
+app.mount("/uploads", StaticFiles(directory="uploads"), name="uploads")
+
 # =========================
 # 💾 DB INIT + MIGRATIONS
 # =========================
@@ -308,6 +314,7 @@ _migrations = [
     "ALTER TABLE rentals ADD COLUMN charged_amount FLOAT DEFAULT 0",
     "ALTER TABLE rentals ADD COLUMN slot_number INTEGER",
     "ALTER TABLE station_slots ADD COLUMN charge_level INTEGER DEFAULT 0",
+    "ALTER TABLE users ADD COLUMN avatar VARCHAR",
 ]
 with engine.begin() as conn:
     for q in _migrations:
@@ -926,6 +933,7 @@ def get_me(authorization: str = Header(None)):
 
         return {
             "id":      user.id,
+            "avatar": user.avatar,
             "phone":   user.phone,
             "name":    user.name,
             "balance": user.balance,
@@ -953,6 +961,40 @@ def get_me(authorization: str = Header(None)):
         }
     finally:
         db.close()
+
+@app.post("/upload-avatar")
+async def upload_avatar(
+    file: UploadFile = File(...),
+    authorization: str = Header(None),
+):
+    user = require_user(authorization)
+
+    os.makedirs("uploads", exist_ok=True)
+
+    filename = f"{uuid.uuid4()}.jpg"
+    path = f"uploads/{filename}"
+
+    with open(path, "wb") as buffer:
+        buffer.write(await file.read())
+
+    db = get_db()
+
+    try:
+        user_db = db.query(User).filter(User.id == user.id).first()
+
+        user_db.avatar = f"{SELF_URL}/{path}"
+
+        db.commit()
+
+        return {
+            "success": True,
+            "avatar": user_db.avatar,
+        }
+
+    finally:
+        db.close()
+
+
 
 
 # =========================
