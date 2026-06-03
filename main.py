@@ -838,6 +838,30 @@ def health():
 # 🔐 AUTH
 # =========================
 
+@app.post("/auth/dev-login")
+def dev_login():
+    """Быстрый вход для тестов — без SMS."""
+    db = get_db()
+    try:
+        user = db.query(User).filter(User.phone == "998000000000").first()
+        if not user:
+            user = User(
+                telegram_id="dev_test_user",
+                phone="998000000000",
+                name="Dev User",
+                balance=1000,
+            )
+            db.add(user)
+            db.commit()
+            db.refresh(user)
+        token = str(uuid.uuid4())
+        db.add(LoginToken(token=token, user_id=user.id))
+        db.commit()
+        return {"token": token, "user": {"id": user.id, "phone": user.phone}}
+    finally:
+        db.close()
+
+
 @app.post("/auth/send-code")
 def send_code(data: SendCodeRequest):
 
