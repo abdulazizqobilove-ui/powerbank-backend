@@ -879,13 +879,13 @@ def dev_add_station():
     """Добавляет реальную станцию в базу."""
     db = get_db()
     try:
-        existing = db.query(Station).filter(Station.serial == "RLHH0S41D7D020").first()
+        existing = db.query(Station).filter(Station.serial == "RL3H082411070020").first()
         if existing:
             return {"id": existing.id, "message": "already exists"}
         station = Station(
             name="Azapower Station 1",
-            serial="RLHH0S41D7D020",
-            mqtt_topic="cabinet/RLHH0S41D7D020",
+            serial="RL3H082411070020",
+            mqtt_topic="cabinet/RL3H082411070020",
             powerbanks=0,
             slots=8,
             online=0,
