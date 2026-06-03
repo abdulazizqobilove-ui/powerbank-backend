@@ -838,7 +838,7 @@ def health():
 # 🔐 AUTH
 # =========================
 
-@app.post("/admin/seed-station/{station_id}")
+@app.post("/dev/seed-station/{station_id}")
 def seed_station(station_id: int):
     """Создаёт тестовые слоты для станции."""
     db = get_db()
