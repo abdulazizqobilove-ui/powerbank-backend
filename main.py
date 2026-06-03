@@ -308,6 +308,7 @@ _migrations = [
     "ALTER TABLE rentals ADD COLUMN charged_amount FLOAT DEFAULT 0",
     "ALTER TABLE rentals ADD COLUMN slot_number INTEGER",
     "ALTER TABLE station_slots ADD COLUMN charge_level INTEGER DEFAULT 0",
+    "UPDATE station_slots SET charge_level = 0 WHERE charge_level IS NULL",
 ]
 with engine.begin() as conn:
     for q in _migrations:
