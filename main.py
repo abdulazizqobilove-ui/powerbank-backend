@@ -839,6 +839,23 @@ def health():
 # 🔐 AUTH
 # =========================
 
+@app.post("/dev/migrate")
+def run_migrate():
+    """Запускает недостающие миграции."""
+    results = []
+    with engine.begin() as conn:
+        for q in [
+            "ALTER TABLE station_slots ADD COLUMN IF NOT EXISTS charge_level INTEGER DEFAULT 0",
+            "UPDATE station_slots SET charge_level = 0 WHERE charge_level IS NULL",
+        ]:
+            try:
+                conn.execute(text(q))
+                results.append({"query": q, "status": "ok"})
+            except Exception as e:
+                results.append({"query": q, "status": str(e)})
+    return {"results": results}
+
+
 @app.post("/dev/seed-station/{station_id}")
 def seed_station(station_id: int):
     """Создаёт тестовые слоты для станции."""
