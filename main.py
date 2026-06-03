@@ -874,6 +874,33 @@ def dev_complete_rental(rental_id: int):
         db.close()
 
 
+@app.post("/dev/add-station")
+def dev_add_station():
+    """Добавляет реальную станцию в базу."""
+    db = get_db()
+    try:
+        existing = db.query(Station).filter(Station.serial == "RLHH0S41D7D020").first()
+        if existing:
+            return {"id": existing.id, "message": "already exists"}
+        station = Station(
+            name="Azapower Station 1",
+            serial="RLHH0S41D7D020",
+            mqtt_topic="cabinet/RLHH0S41D7D020",
+            powerbanks=0,
+            slots=8,
+            online=0,
+            address="Душанбе",
+            lat=38.5598,
+            lng=68.7870,
+        )
+        db.add(station)
+        db.commit()
+        db.refresh(station)
+        return {"id": station.id, "serial": station.serial}
+    finally:
+        db.close()
+
+
 @app.post("/dev/migrate")
 def run_migrate():
     """Запускает недостающие миграции."""
