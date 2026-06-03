@@ -838,6 +838,30 @@ def health():
 # 🔐 AUTH
 # =========================
 
+@app.post("/admin/seed-station/{station_id}")
+def seed_station(station_id: int):
+    """Создаёт тестовые слоты для станции."""
+    db = get_db()
+    try:
+        station = db.query(Station).filter(Station.id == station_id).first()
+        if not station:
+            raise HTTPException(404, "Station not found")
+        db.query(StationSlot).filter(StationSlot.station_id == station_id).delete()
+        for i in range(1, station.slots + 1):
+            db.add(StationSlot(
+                station_id=station_id,
+                slot_number=i,
+                status="occupied",
+                charge_level=4,
+                powerbank_serial=f"PB{i:03d}",
+            ))
+        station.powerbanks = station.slots
+        db.commit()
+        return {"success": True, "slots": station.slots}
+    finally:
+        db.close()
+
+
 @app.post("/auth/dev-login")
 def dev_login():
     """Быстрый вход для тестов — без SMS."""
