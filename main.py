@@ -839,6 +839,41 @@ def health():
 # 🔐 AUTH
 # =========================
 
+@app.post("/dev/complete-rental/{rental_id}")
+def dev_complete_rental(rental_id: int):
+    """Симулирует возврат павербанка — для тестов."""
+    db = get_db()
+    try:
+        rental = db.query(Rental).filter(Rental.id == rental_id).first()
+        if not rental:
+            raise HTTPException(404, "Rental not found")
+        # Если pending — сначала активируем
+        if rental.status == "pending":
+            rental.status = "active"
+        if rental.status != "active":
+            raise HTTPException(400, f"Rental status is '{rental.status}', not active")
+        end_time        = datetime.utcnow()
+        cost            = calc_cost(rental.start_time, end_time)
+        rental.cost     = cost
+        rental.end_time = end_time
+        rental.status   = "completed"
+        rental.payment_status = "pending"
+        # Обновляем слот
+        slot = db.query(StationSlot).filter(
+            StationSlot.station_id == rental.station_id,
+            StationSlot.slot_number == rental.slot_number,
+        ).first()
+        if slot:
+            slot.status = "occupied"
+        station = db.query(Station).filter(Station.id == rental.station_id).first()
+        if station:
+            station.powerbanks += 1
+        db.commit()
+        return {"success": True, "cost": cost, "duration_seconds": int((end_time - rental.start_time).total_seconds())}
+    finally:
+        db.close()
+
+
 @app.post("/dev/migrate")
 def run_migrate():
     """Запускает недостающие миграции."""
